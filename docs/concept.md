@@ -2,107 +2,165 @@
 
 ## 一言で
 
-**創作のための、忘れない AI ミドルウェア。**
+**「創作向け AI エージェントに長期一貫性を与えるための、ドメイン非依存ライブラリ。」**
 
 ---
 
 ## プロダクトビジョン
 
-つむぎは、LLM API の前段に配置する**創作ドメイン特化のコンテキスト管理ミドルウェア**である。TRPG キャンペーンや長編小説のように、長期にわたり多数のキャラクター・場面・設定が蓄積するユースケースで、LLM のコンテキストウィンドウ制約を超えて**一貫性**と**連続性**を維持する。
+つむぎは、LLM API の前段に配置するコンテキスト管理ミドルウェアである。物語構造を持つ長期セッション（TRPG キャンペーン、長編小説、同一プロジェクトでの継続的な AI 対話）で、以下の課題を解決するライブラリを提供する:
 
-兄弟プロジェクトの chatstream が音声 AI デバイス向けに設計されているのに対し、つむぎは**テキスト創作**に最適化される。
+- LLM のコンテキストウィンドウ制約を超えた**情報永続化**
+- 話題・シーン切替の**自動検知**
+- キャラクター / 世界観 / 伏線 / 裁定の**動的注入**
+- 時系列 / 章順 / 文脈距離に応じた**関連度スコアリング**
 
-### 核心的価値
+つむぎは**製品ではなく、製品を支えるコアエンジン**である。最終利用者に直接売られるのではなく、上位製品 (つかさ / つづり / 将来的に他ドメイン) に組み込まれて機能を発揮する。
 
-**「前の章／前のセッションを覚えている AI」**
+### なぜ今か
 
-既存の創作 AI サービス (AIのべりすと、NovelAI、SillyTavern 等) は、ロアブックや character card などの**フラットな構造**でしかユーザーの蓄積を保持しない。長編になるほど情報の参照精度が落ちる。つむぎは階層的インデックスで**話題・場面・章の構造を動的に構築**し、関連する過去情報を LLM 呼び出しに自動で織り込む。
-
----
-
-## ターゲットユーザー (= つむぎを利用する上位製品)
-
-つむぎは最終ユーザーに直接販売されるものではなく、創作ドメインの上位製品に組み込まれる**中間層ライブラリ**である。
-
-- **つかさ (Tsukasa)**: TRPG GM 補助。キャンペーン・セッション・NPC の階層的管理
-- **つづり (Tsuzuri)**: 小説執筆補助。章・キャラクター・伏線の階層的管理
-- **つくも (Tsukumo)** (将来): RPGツクール特化ツールでの長期開発セッション記憶
+- ローカル LLM の実用品質到達により、買い切り × オフライン動作の創作 AI 市場が成立
+- AIのべりすと / NovelCrafter / SillyTavern 等のツールが**静的な辞書管理**に留まり、動的なコンテキスト管理の空白が残る
+- つかさ / つづりの bottom-up 分析から、両製品で共通する抽象が明確化した
 
 ---
 
-## 既存手法との位置づけ
+## 設計原則
 
-| 手法 | アプローチ | つむぎとの差分 |
+### 1. Bottom-up からの抽出
+
+つむぎの設計は、**つかさ / つづりで実際に必要になった機能**から抽出された。推測で作られた抽象ではない。そのため:
+
+- 使われない機能は含まない
+- 上位製品の実需に裏打ちされた API のみを提供
+- 将来の製品追加時は、その製品の要件から再抽出する
+
+### 2. Turn 非依存のコア
+
+Turn の具体型（Dialogue / Narration / Check / Edit 等）は製品ごとに大きく異なる。つむぎはこれらの**具体型を知らない**。
+
+- `Chunk.text: String` — 正規化された表示用テキスト
+- `Chunk.items: Vec<serde_json::Value>` — 製品ごとのドメイン型 (serialize 済み)
+
+製品側が Turn 型を定義し、serialize してつむぎに渡す。つむぎは text を対象に検索・要約し、items は参照として保持するだけ。
+
+### 3. Trait 駆動の拡張性
+
+以下の 6 つの trait で主要な差し替え点を切る:
+
+- `StorageProvider` — 永続化層 (in-memory / SQLite / 独自)
+- `EmbeddingProvider` — 埋め込み生成 (API / ローカル / mock)
+- `LLMProvider` — LLM 呼び出し (LM Studio / Ollama / クラウド)
+- `Retriever` — 検索戦略 (BM25 + cosine ハイブリッドがデフォルト)
+- `RelevanceScorer` — 関連度スコア (時間減衰 / 章順 / その他)
+- `EventDetector` — 話題切替 / トリガー検知
+
+各 trait には合理的なデフォルト実装を同梱し、製品は必要部分だけ差し替える。
+
+### 4. Alloy による形式仕様 + oxidtr 生成
+
+ドメインモデルは Alloy で記述し、oxidtr で Rust / TypeScript の型・テスト・不変条件を自動生成する。
+
+Alloy に書くもの:
+- 型構造 (newtype ID、enum、record フィールド)
+- 参照整合性 (dangling ID 防止)
+- 主要な不変条件 (階層の非循環、pending items の寿命)
+
+Rust に書くもの:
+- 業務ロジック
+- 検索・スコアリング・プロンプト組み立て
+
+### 5. 創作ファースト
+
+既存の会話エージェントライブラリ (LangChain Memory 等) は「対話の履歴管理」を主目的とする。つむぎは**創作構造**を第一級で扱う:
+
+- Character は voice_samples を持ち、few-shot 注入できる
+- PendingItem は未解決を明示的に追跡できる
+- LoreEntry は scope (Global / ChunkLocal) を持つ
+- Scene は Chunk の特殊化として階層に組み込まれる
+
+---
+
+## 消費者 (上位製品)
+
+### 現在の実需者
+
+| 製品 | 用途 | つむぎの利用度 |
 |---|---|---|
-| SillyTavern Lorebook | キーワードトリガーで静的情報を挿入 | つむぎは階層的で動的、話題切り替えを検知して必要な範囲だけを注入 |
-| NovelAI Codex | キャラ・場所・用語の辞書 | つむぎは辞書に加え、シーン間の時系列・因果構造を扱う |
-| LangChain Memory | Buffer / Summary / Hybrid | つむぎは創作特化の Turn 多型 (narration / dialogue / action) に対応 |
-| chatstream | 音声デバイス向けの階層的コンテキスト | 同じ設計思想を共有するが、テキスト創作特有のドメイン概念 (Chapter / Scene / Character / Lore) を第一級で扱う |
+| [つかさ](https://github.com/penta2himajin/tsukasa) | TRPG GM 補助 | フル活用 (階層 / 話題検知 / Fact / Character / LoreEntry / PendingItem) |
+| [つづり](https://github.com/penta2himajin/tsuzuri) | 小説執筆補助 | 7 割活用 (recency 不要、章順 Scorer 差し替え) |
 
-### 独自性
+### 将来検討
 
-- **Turn の多型性**: 会話 (dialogue)、語り (narration)、行為 (action)、下書き (passage)、編集 (edit) を同一モデルで扱える
-- **構造化ドメイン状態**: チャンクとは別レイヤーで Character / WorldState / PendingPlot 等を保持
-- **形式仕様駆動**: Alloy モデルから Rust/TS の型・テスト・不変条件を oxidtr で自動生成
+- [つくも](https://github.com/penta2himajin/tsukumo): 軽量利用 (Fact + LoreEntry のみ。階層 / 検知不要)
+- [chatstream](https://github.com/penta2himajin/chatstream): 音声 AI 向け、将来的に抽象共通化検討
 
----
+### 明示的に対象外
 
-## アーキテクチャ (概要)
-
-```
-上位製品 (つかさ / つづり / つくも)
-        ↓
-[つむぎ]
-  ├── Domain Model (Turn / Chunk / Character / Scene / Fact / LoreEntry)
-  ├── Context Compiler — 常駐 + 動的コンテキストを組み立てる
-  ├── Hierarchical Context Store — 全データを階層的に保持
-  ├── Topic / Scene Switching Detector — cascade 式
-  └── Trait 抽象
-        ├── StorageProvider (InMemory / SQLite / ...)
-        ├── EmbeddingProvider (Cloudflare / LM Studio / mock)
-        └── LLMProvider (LM Studio / Ollama / Gemini / DeepSeek)
-        ↓
-ローカル LLM / クラウド LLM
-```
-
-詳細は `docs/tech-architecture.md` を参照。
+- polarist-ai: 異なるドメイン (セッションレス SaaS)、chatstream ベースで構築済み
 
 ---
 
-## chatstream との関係
+## 他ライブラリとの位置付け
 
-- **両者は独立実装**。つむぎは chatstream の派生ではなく、創作ドメインをゼロから設計した別クレート
-- 共通する設計思想 (全データ保持、階層インデックス、trait 抽象) は引き継ぐ
-- 将来的に chatstream の話題検知エンジンをつむぎに差し込めるよう、検知レイヤーは trait で抽象化する
-- polarist-ai は chatstream をベースに構築されており、つむぎをベースにする想定はない (ドメインが異なる)
+### SillyTavern / AIのべりすと の Lorebook / Codex
+
+- 静的辞書、ユーザーが手動管理
+- トリガー語で注入されるが、コンテキスト枠を圧迫
+
+**つむぎとの差**: 動的階層、距離スコアリング、EventDetector による自動検知
+
+### LangChain Memory / Mem0
+
+- 会話履歴管理中心、Buffer / Summary / Hybrid
+- 対話エージェント前提、創作構造の概念なし
+
+**つむぎとの差**: 創作ドメイン (Character / Scene / LoreEntry / PendingPlot) を第一級
+
+### RAPTOR / VARS / CarMem
+
+- 学術研究、階層要約 / preference memory / append-update 操作
+- それぞれ部分的な機能
+
+**つむぎとの差**: 実装された Rust ライブラリ、上位製品で使用可能、日本語特化
+
+### chatstream
+
+- 音声 AI 向け、話題検知 3 段カスケード
+- 同じ設計思想 (階層、trait 抽象、oxidtr 駆動) を共有する**兄弟プロジェクト**
+
+**つむぎとの差**: 創作ドメイン (text)、chatstream は対話ドメイン (voice)。将来的に共通基盤化を検討
 
 ---
 
-## 想定ユースケース
+## 設計決定の記録
 
-### つかさ経由
+つかさ / つづりの bottom-up 分析から導出された 10 論点の決着:
 
-- キャンペーン 20 セッション目に「3 セッション前の商人 NPC 覚えてる？」で過去 chunk を復元
-- ダイス判定の結果を fact として記録、後続の判定で参照
-- 「隠し通路を探したが失敗した」などの pending_investigation を追跡
-
-### つづり経由
-
-- 第 10 章執筆中に「2 章で張った伏線」を lore entry として自動提示
-- キャラクターの口調・性格を character sheet に蓄積、台詞生成時に参照
-- 章末の未決事項 (pending_plot) を追跡し、後続章への引き継ぎを支援
+| 論点 | 決定 | 理由 |
+|---|---|---|
+| Turn 表現 | **Turn 非依存**、`Chunk.items: Vec<Value>` に製品が serialize | ドメイン Turn 型が製品ごとに根本的に違う |
+| Character sheet | **`sheet: Map<String, Value>`** の自由形式、共通フィールドのみ型付け | CoC SAN vs 小説 backstory は共通化できない |
+| Scene と Chunk | **Scene = Chunk + metadata タグ**、階層は単一機構 | 両製品とも 3 層の階層を持ち、Scene を別 entity にすると重複 |
+| LoreEntry embedding | **`EmbeddingStore` trait**、デフォルトは長さで判定 | 短い固有名詞は不要、長い世界観説明は必要 |
+| RAG hybrid | **BM25 + cosine**、日本語は lindera | 両方の強みが必要、`Retriever` trait で差し替え |
+| RelevanceScorer | **trait 化**、`TemporalDecay` / `ChapterOrder` / `NoDecay` 同梱 | つかさ・つづり・つくもで減衰モデルが質的に異なる |
+| EventDetector | **trait 化**、3 段カスケードを `CascadeDetector` で chain | つかさのトリガー・つづりの伏線活性化・chatstream 話題切替の共通構造 |
+| chatstream 統合 | **当面独立**、抽象を互換に保つ | 早期統合は設計を縛る、将来統合の余地は残す |
+| Alloy 粒度 | **中間**: 型 + 参照整合 + 主要ライフサイクル | 完全制約は重い、型のみでは価値薄い |
+| 配布形態 | **`core` + `cli` + `ts` の 3 クレート**、`kv` サブクレート分離は保留 | つくも方針が固まってから再検討 |
 
 ---
 
-## 未確定論点
+## 現在のフェーズ
 
-以下はフェーズ進行に応じて順次決定する。
+Phase 0: 設計固め (bottom-up 抽出完了、Alloy モデル初版着手中)
 
-- Turn / Chunk 抽象の最終形 (多型 enum か、trait object か)
-- 構造化ドメイン状態 (Character / WorldState) のストレージ設計
-- chatstream の話題検知エンジンとの接続方針 (将来の adapter か、独立実装か)
-- Alloy モデルの粒度 (不変条件どこまで書き切るか)
-- 配布形態 (Rust crate 単体 / TS SDK 同梱 / Tauri 用 adapter)
+次フェーズの入り口:
+- Alloy モデル `models/tsumugi.als` 初版作成
+- oxidtr 生成パイプライン動作確認
+- `StorageProvider` / `EmbeddingProvider` / `LLMProvider` の trait 定義
+- in-memory 実装と結合テスト
 
 ---
 
