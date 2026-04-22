@@ -1,0 +1,27 @@
+# Rust
+target/
+
+# Bun / Node
+node_modules/
+dist/
+.bun/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Env
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+
+# Generated artifacts (oxidtr output — paths TBD)
+# generated/
