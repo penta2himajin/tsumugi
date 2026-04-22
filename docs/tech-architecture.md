@@ -9,6 +9,10 @@
 - 日本語トークナイザ: lindera (BM25 用)
 - ベクトル検索: 初期は InMemory、将来 sqlite-vec 検討
 
+推論ランタイム (上位製品での想定): Ollama (Apple Silicon で MLX バックエンド、2026-03〜) / LM Studio / llama.cpp。`LLMProvider` trait は OpenAI 互換 API をまず実装し、Ollama / LM Studio の両方を単一実装でカバーする。
+
+ハードウェア帯域別の推奨モデルは `docs/runtime-environment.md` を参照。調査背景は `docs/research/2026-04-model-landscape.md` を参照。
+
 ## ワークスペース構成
 
 ```
@@ -226,9 +230,147 @@ pub trait StorageProvider: Send + Sync {
 
 デフォルト実装: `InMemoryStorage` (Phase 1)、`SqliteStorage` (Phase 2)
 
-### EmbeddingProvider / LLMProvider / Retriever
+### LLMProvider
 
-(前版と同じ設計、ここでは省略)
+LLM 呼び出しの抽象。OpenAI 互換 API を第一実装に据えることで、Ollama / LM Studio / llama.cpp server の**すべてを単一実装でカバー**する。
+
+```rust
+pub trait LLMProvider: Send + Sync {
+    async fn complete(&self, req: LLMRequest) -> Result<LLMResponse>;
+    async fn stream(&self, req: LLMRequest) -> Result<BoxStream<LLMChunk>>;
+    fn metadata(&self) -> &ModelMetadata;
+}
+
+pub struct LLMRequest {
+    pub messages: Vec<Message>,
+    pub max_tokens: Option<u32>,
+    pub temperature: Option<f32>,
+    pub top_p: Option<f32>,
+    pub stop: Vec<String>,
+    pub grammar: Option<GrammarSpec>,      // 構造化出力制約
+    pub tools: Vec<ToolSpec>,              // tool calling / function calling
+    pub response_format: Option<ResponseFormat>, // json_mode / text
+}
+
+pub enum GrammarSpec {
+    Gbnf(String),                          // llama.cpp GBNF (第一選択、移植性高)
+    JsonSchema(serde_json::Value),         // JSON Schema → 各ランタイムで変換
+    Regex(String),                         // 簡易制約
+}
+```
+
+#### ModelMetadata
+
+使用しているモデルの特性を保持。Context Compiler の動作調整や、製品側の UX (推奨モデルへのアップグレード提案等) で利用される。
+
+```rust
+pub struct ModelMetadata {
+    pub name: String,                      // "qwen3-swallow-8b"
+    pub family: ModelFamily,               // Qwen3, Gemma4, Llama, ...
+    pub parameters_total: u64,             // 30_500_000_000
+    pub parameters_active: Option<u64>,    // MoE で 3_300_000_000、dense なら None
+    pub quantization: QuantizationLevel,
+    pub context_window: u32,               // 32768, 131072, 262144 等
+    pub supports_tools: bool,
+    pub supports_json_mode: bool,
+    pub supports_grammar: bool,
+    pub language_focus: Vec<LanguageCode>, // ["ja", "en"] など
+}
+
+pub enum QuantizationLevel {
+    Fp16,
+    Fp8,
+    Int8,                          // Q8_0
+    Int6,                          // Q6_K
+    Int5,                          // Q5_K_M
+    Int4,                          // Q4_K_M, AWQ, GPTQ, MXFP4, MLX 4bit
+    Int3,                          // Q3_K_M, IQ3_XXS
+    Int2,                          // Q2_K, IQ2_M, MLX 2bit
+    Ternary,                       // BitNet b1.58, Ternary Bonsai
+    OneBit,                        // 1-bit Bonsai
+    Unknown,
+}
+
+pub enum ModelFamily {
+    Qwen3, Qwen35, Qwen36,
+    Gemma3, Gemma4,
+    Llama3, Llama4,
+    Mistral, Mixtral,
+    Phi4,
+    Swallow,                       // Qwen3 Swallow, Llama Swallow 等の派生
+    Elyza,
+    Bonsai,                        // deepgrove / PrismML 系
+    GptOss,
+    GlmV5,
+    KimiK,
+    DeepseekV3,
+    Other(String),
+}
+```
+
+#### KV cache 量子化
+
+長文脈でのメモリ節約のため、KV cache 量子化をリクエスト単位で指定可能にする:
+
+```rust
+pub struct LLMRequest {
+    // ... 上記フィールド
+    pub kv_cache_quantization: Option<KvCacheQuant>,
+}
+
+pub enum KvCacheQuant {
+    None,                          // FP16
+    Q8,
+    Q5,
+    Q4,
+    MlxTurboQuant,                 // MLX ランタイム専用
+}
+```
+
+これは Context Compiler が大量コンテキストを渡す際に製品側が設定する。つむぎコアは指定しない、製品の責任。
+
+#### リファレンス実装
+
+- `OpenAICompatibleProvider` — Ollama / LM Studio / llama.cpp server を包括
+- `MockLLMProvider` — テスト用、固定レスポンス
+- (将来) `AnthropicProvider`, `CloudflareWorkersAIProvider` 等の直接実装
+
+ローカル推奨前提だが、製品側がユーザー選択でクラウドプロバイダを追加できる柔軟性を保つ (特につづりの AIのべりすと乗り換え層で、原稿の一部だけクラウドに投げたい等のユースケース)。
+
+### EmbeddingProvider
+
+```rust
+pub trait EmbeddingProvider: Send + Sync {
+    async fn embed(&self, text: &str) -> Result<Vec<f32>>;
+    async fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>>;
+    fn dim(&self) -> usize;
+}
+```
+
+リファレンス実装: `MockEmbeddingProvider` / `LMStudioEmbeddingProvider` / `OllamaEmbeddingProvider`
+
+### Retriever
+
+```rust
+pub trait Retriever: Send + Sync {
+    async fn retrieve(
+        &self,
+        query: &str,
+        query_embedding: Option<&[f32]>,
+        candidates: &[ChunkId],
+        top_k: usize,
+    ) -> Result<Vec<RetrievalHit>>;
+}
+
+pub struct RetrievalHit {
+    pub chunk_id: ChunkId,
+    pub score: f32,
+    pub bm25_score: Option<f32>,
+    pub cosine_score: Option<f32>,
+}
+```
+
+デフォルト実装: `HybridRetriever` (BM25 via lindera + cosine 類似度)、`Bm25Retriever`, `CosineRetriever`
 
 ### RelevanceScorer
 
@@ -285,7 +427,19 @@ impl RelevanceScorer for FileProximityScorer {
 
 ### EventDetector
 
-(前版と同じ設計)
+```rust
+pub trait EventDetector: Send + Sync {
+    type Event;
+    async fn detect(&self, chunk: &Chunk, new_turn: &serde_json::Value) -> Result<Vec<Self::Event>>;
+}
+```
+
+同梱実装:
+
+- `KeywordDetector` — 文字列完全一致、即応、コスト 0
+- `EmbeddingSimilarityDetector` — top-K 意味類似
+- `LLMClassifierDetector` — 軽量 LLM による yes/no 判定
+- `CascadeDetector` — Keyword → Embedding → LLM の 3 段カスケード (chatstream 流)
 
 ---
 
@@ -321,6 +475,18 @@ pub struct DynamicLayer {
 ```
 
 製品側は CompiledContext を受け取り、最終プロンプトを組み立てる (system プロンプト、few-shot 整形、style 反映等は製品の責任)。
+
+### コンテキストサイズ予算
+
+Context Compiler はモデルの `context_window` を `ModelMetadata` から取得して、動的レイヤーのサイズを調整する。大まかな予算割当:
+
+- 出力予約: `max_tokens` 指定分
+- system プロンプト: 500 トークン
+- 常駐レイヤー: 全体の 30%
+- 動的レイヤー: 全体の 50%
+- バッファ: 20%
+
+製品側がこれを override 可能。MoE モデル (30B-A3B 等) は速度が速いため文脈を大きく取っても実用、dense 小型モデルはコンテキストを絞る方が安定する場合が多い。
 
 ---
 
@@ -419,3 +585,6 @@ let scorer = FileProximityScorer {
 - tsumugi-ts の実装時期
 - `SourceLocation` の表現の抽象度 (ファイルパス文字列 / 構造化表現 / URI)
 - 追加 feature flag (`coding`, `research`) の設計指針
+- `ModelFamily` enum の粒度 (enum が長すぎる懸念、Other(String) を許容するか)
+- `GrammarSpec::JsonSchema` から各ランタイム固有形式への変換の責務 (provider 側か compiler 側か)
+- KV cache 量子化のランタイム横断 API
