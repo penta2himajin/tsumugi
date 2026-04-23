@@ -37,6 +37,12 @@ mkdir -p "${OUTPUT_DIR}"
 echo "==> generating from ${MAIN_ALS}"
 "${OXIDTR_BIN}" generate "${MAIN_ALS}" --target rust --output "${OUTPUT_DIR}"
 
+# oxidtr emits `pub mod` / `pub use` in declaration order; rustfmt sorts them
+# alphabetically. Normalize here so the committed state matches what anyone
+# (local dev or CI drift check) produces.
+echo "==> cargo fmt on tsumugi-core (normalizes gen/)"
+(cd "${REPO_ROOT}" && cargo fmt -p tsumugi-core)
+
 echo "==> running cargo check --all-features"
 (cd "${REPO_ROOT}" && cargo check --all-features --quiet)
 
