@@ -1,4 +1,6 @@
 //! Creative domain extension (feature = "creative").
 //!
-//! Populated in Phase 1 from `models/tsumugi/creative.als` via oxidtr,
-//! plus hand-written extensions.
+//! Re-exports the oxidtr-generated `tsumugi/creative` subtree. Hand-written
+//! extensions will be added here in Phase 1.
+
+pub use crate::tsumugi::creative::*;

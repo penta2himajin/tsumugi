@@ -23,5 +23,12 @@ Thumbs.db
 # Logs
 *.log
 
-# Generated artifacts (oxidtr output — paths TBD)
-# generated/
+# oxidtr scaffolding files — these are emitted alongside the types subtree
+# but are not wired into lib.rs (some have known broken codegen for our
+# Alloy patterns). Re-enable individually in Phase 1 if needed.
+tsumugi-core/src/gen/mod.rs
+tsumugi-core/src/gen/helpers.rs
+tsumugi-core/src/gen/operations.rs
+tsumugi-core/src/gen/newtypes.rs
+tsumugi-core/src/gen/fixtures.rs
+tsumugi-core/src/gen/tests.rs

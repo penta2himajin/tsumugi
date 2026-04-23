@@ -68,8 +68,29 @@ sig LoreConditional      extends LoreScope {}
 
 -------------------------------------------------------------------------------
 -- Invariants
+--
+-- TODO(Phase 0 refinement): LoreEntry.scope Conditional non-empty invariant
+-- — currently deferred to the Rust newtype (`ConditionalExpr::new`). Consider
+-- whether to express it structurally here once opaque-string handling is
+-- stabilized.
 -------------------------------------------------------------------------------
 
--- TODO(Phase 0): LoreEntry.scope Conditional non-empty invariant — currently
--- deferred to the Rust newtype (`ConditionalExpr::new`). Consider whether to
--- express it structurally here once opaque-string handling is stabilized.
+-- Cardinality tautology — scale-agnostic on participants (see core.als).
+fact SceneViewParticipantsUnbounded {
+  all sv: SceneView | #sv.participants = #sv.participants
+}
+
+-------------------------------------------------------------------------------
+-- Usage markers — declare these standalone sigs as "used by the creative
+-- surface" so oxidtr's UnreferencedSig warning is suppressed. They are
+-- referenced through the context compiler on the Rust side, not structurally
+-- from other sigs. Follows the oxidtr self-host convention
+-- (see oxidtr/models/oxidtr-split.als `pred useX[x: X] { x = x }`).
+-------------------------------------------------------------------------------
+
+pred useSceneView     [sv: SceneView]      { sv = sv }
+pred useStylePreset   [sp: StylePreset]    { sp = sp }
+pred useLoreEntry     [le: LoreEntry]      { le = le }
+pred useLoreGlobal    [v: LoreGlobal]      { v = v }
+pred useLoreChunkLocal[v: LoreChunkLocal]  { v = v }
+pred useLoreConditional[v: LoreConditional] { v = v }

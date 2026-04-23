@@ -34,14 +34,25 @@
   - [x] 階層非循環、親子逆関係、階層要約不変条件、要約メソッド整合 (Decision A)、Fact supersession 非循環
   - [x] `models/tsumugi/creative.als` — Character, SceneView, StylePreset, LoreEntry, Formality, PoV, Tense, LoreScope の sig
   - [x] oxidtr generate で Rust 出力確認 (`/tmp` で確認、生成物は未コミット)
+- [x] **Alloy 警告の棚卸しと対応** (2026-04-23) — 36 件 → 4 件 (false positive) まで削減
+  - [x] `edited_by_user` / `auto_update_locked` を Alloy から除去し Rust 側の runtime flag として扱う判断
+  - [x] `UnconstrainedCardinality` 警告に対する tautology fact 追加 (oxidtr self-host 慣例)
+  - [x] `UnreferencedSig` (SceneView / StylePreset / LoreEntry / LoreScope 変種) に対する `pred useX` マーク
+  - [x] `UnhandledResponsePattern` (File / Custom / GlobalScope / ChunkLocalScope) に対する `pred useX` マーク
+  - [x] `UnconstrainedTransitivity` (superseded_by) に対する直接 fact 追加
+  - [x] 残る `MissingInverse` (PendingItem.expected_resolution_chunk / resolved_at × Chunk.pending、計 4 件) は設計上の reference-only 関係で ownership link でないため false positive として受容、.als 内に rationale 記載
+- [x] **oxidtr 生成物の tsumugi-core への配置設計** (2026-04-23)
+  - [x] 生成先: `tsumugi-core/src/gen/` に確定
+  - [x] lib.rs で `#[path = "gen/tsumugi"] pub(crate) mod tsumugi { ... }` により型サブツリーのみを wire (scaffolding は未使用)
+  - [x] `creative` feature gate は `pub mod creative;` のモジュール全体 gate で実装
+  - [x] gen/ の型サブツリーはコミット (build-without-oxidtr を優先、IDE 互換性)
+  - [x] 生成 scaffolding (helpers / operations / newtypes / fixtures / tests / 最上位 mod.rs) は `.gitignore`
+  - [x] `scripts/regen.sh` で再生成 (oxidtr repo パス `--` / `OXIDTR_HOME` / デフォルト `../oxidtr`)
 - [ ] Alloy モデル 2 版 (Phase 0 → 1 移行前に着手)
   - [ ] PendingItem ライフサイクル不変条件 (introduced_at ≤ resolved_at の時系列モデル化)
   - [ ] LoreEntry.scope Conditional 非空制約 (opaque-string 扱いと併せて検討)
-  - [ ] Alloy 警告 (UnconstrainedSelfRef / UnconstrainedCardinality / MissingInverse) の棚卸しと対応判断
-- [ ] oxidtr 生成物の tsumugi-core への配置設計
-  - [ ] 生成先 (`tsumugi-core/src/gen/` 等) の確定
-  - [ ] core / creative の feature gate 方針 (モジュール全体 gate or 個別 gate)
-  - [ ] .gitignore 扱い (コミットする / 生成するの判断)
+  - [ ] oxidtr scaffolding の再評価 (helpers の transitive closure walker、fixtures 等を選択的に wire するか)
+  - [ ] `oxidtr check` を CI に組み込む判断 (現状は regen で `cargo check --all-features` まで走らせる)
 
 ## Phase 1: コア実装 (つかさ MVP と並行)
 
