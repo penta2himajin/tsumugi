@@ -1,0 +1,23 @@
+[package]
+name = "tsumugi-cli"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Development / verification REPL for tsumugi-core"
+publish = false
+
+[[bin]]
+name = "tsumugi"
+path = "src/main.rs"
+
+[features]
+default = []
+creative = ["tsumugi-core/creative"]
+
+[dependencies]
+tsumugi-core = { path = "../tsumugi-core" }
+anyhow.workspace = true
+tokio.workspace = true
+tracing.workspace = true

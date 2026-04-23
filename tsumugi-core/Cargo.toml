@@ -1,0 +1,27 @@
+[package]
+name = "tsumugi-core"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Hierarchical narrative context middleware — core library"
+publish = false
+
+[features]
+default = []
+# Creative domain extension (Character / SceneView / StylePreset / LoreEntry).
+# `creative` は暫定名。将来 `story` 等への改名可能性あり (docs/concept.md 参照)。
+creative = []
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true

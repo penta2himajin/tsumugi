@@ -20,25 +20,28 @@
   - [x] 入力→保存 / 選択的投入 / 要約非同期 の 3 処理パスを明文化
   - [x] `creative` は暫定名であり改名可能性を docs に記載
 - [x] **`Chunk.source_location` 実装判断: B 案 (`SourceLocationValue` sum 型) 確定** (2026-04-23) — 詳細は `tech-architecture.md` §Phase 1 型定義時に決める実装判断
-- [ ] Alloy モデル `models/tsumugi-core.als` 初版
-  - [ ] Chunk, Fact, PendingItem の sig (LoreEntry は creative へ)
-  - [ ] 参照整合性の述語
-  - [ ] 階層非循環の不変条件
-  - [ ] **階層要約の不変条件** (`summary_level == 0` ⇒ items 非空、`> 0` ⇒ children 非空、親 > 子)
-  - [ ] PendingItem ライフサイクルの不変条件
-  - [ ] Fact supersession の非循環
-  - [ ] SourceLocation は sum sig (`FileSourceLocation` + `CustomSourceLocation { schema, payload }`) として定義
-- [ ] Alloy モデル `models/tsumugi-creative.als` 初版
-  - [ ] Character, SceneView, StylePreset, **LoreEntry** の sig
-  - [ ] Character の first_appearance 整合性
-  - [ ] LoreEntry.scope Conditional の非空制約
-- [ ] oxidtr ([penta2himajin/oxidtr](https://github.com/penta2himajin/oxidtr)) 生成フロー動作確認
-  - [ ] core と creative の分離生成
-- [ ] ワークスペース skeleton
-  - [ ] `tsumugi-core/` の Cargo.toml + src/ 雛形
-  - [ ] `creative` feature flag の設定
-  - [ ] `tsumugi-cli/` の Cargo.toml + main.rs 雛形
-  - [ ] `tsumugi-ts/` の package.json + tsconfig 雛形
+- [x] **ワークスペース skeleton** (2026-04-23)
+  - [x] root `Cargo.toml` (workspace、共有依存定義)
+  - [x] `rust-toolchain.toml` (stable + rustfmt + clippy)
+  - [x] `tsumugi-core/` の Cargo.toml + src/ 雛形 (lib.rs, domain.rs, traits.rs, creative.rs)
+  - [x] `creative` feature flag 設定 (`#[cfg(feature = "creative")]` で creative モジュール gate)
+  - [x] `tsumugi-cli/` の Cargo.toml + main.rs 雛形
+  - [x] `tsumugi-ts/` の package.json + tsconfig + src/index.ts 雛形
+  - [x] `cargo check --all-features` が通ることを確認
+- [x] **Alloy モデル multi-file 初版** (2026-04-23) — oxidtr multi-file 対応を活用
+  - [x] `models/tsumugi.als` (main) — `module tsumugi`, `open tsumugi/{core,creative}`, クロスモジュール不変条件
+  - [x] `models/tsumugi/core.als` — Chunk, Fact, PendingItem, SourceLocationValue (File + Custom), SummaryMethod, FactScope, FactOrigin, Priority の sig
+  - [x] 階層非循環、親子逆関係、階層要約不変条件、要約メソッド整合 (Decision A)、Fact supersession 非循環
+  - [x] `models/tsumugi/creative.als` — Character, SceneView, StylePreset, LoreEntry, Formality, PoV, Tense, LoreScope の sig
+  - [x] oxidtr generate で Rust 出力確認 (`/tmp` で確認、生成物は未コミット)
+- [ ] Alloy モデル 2 版 (Phase 0 → 1 移行前に着手)
+  - [ ] PendingItem ライフサイクル不変条件 (introduced_at ≤ resolved_at の時系列モデル化)
+  - [ ] LoreEntry.scope Conditional 非空制約 (opaque-string 扱いと併せて検討)
+  - [ ] Alloy 警告 (UnconstrainedSelfRef / UnconstrainedCardinality / MissingInverse) の棚卸しと対応判断
+- [ ] oxidtr 生成物の tsumugi-core への配置設計
+  - [ ] 生成先 (`tsumugi-core/src/gen/` 等) の確定
+  - [ ] core / creative の feature gate 方針 (モジュール全体 gate or 個別 gate)
+  - [ ] .gitignore 扱い (コミットする / 生成するの判断)
 
 ## Phase 1: コア実装 (つかさ MVP と並行)
 
