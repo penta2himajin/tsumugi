@@ -19,6 +19,7 @@
   - [x] `SourceLocation` を trait 化、core 標準実装 `FileSourceLocation` を同梱
   - [x] 入力→保存 / 選択的投入 / 要約非同期 の 3 処理パスを明文化
   - [x] `creative` は暫定名であり改名可能性を docs に記載
+- [x] **`Chunk.source_location` 実装判断: B 案 (`SourceLocationValue` sum 型) 確定** (2026-04-23) — 詳細は `tech-architecture.md` §Phase 1 型定義時に決める実装判断
 - [ ] Alloy モデル `models/tsumugi-core.als` 初版
   - [ ] Chunk, Fact, PendingItem の sig (LoreEntry は creative へ)
   - [ ] 参照整合性の述語
@@ -26,12 +27,12 @@
   - [ ] **階層要約の不変条件** (`summary_level == 0` ⇒ items 非空、`> 0` ⇒ children 非空、親 > 子)
   - [ ] PendingItem ライフサイクルの不変条件
   - [ ] Fact supersession の非循環
-  - [ ] SourceLocation は抽象 sig として定義 (実装は Rust 側 trait)
+  - [ ] SourceLocation は sum sig (`FileSourceLocation` + `CustomSourceLocation { schema, payload }`) として定義
 - [ ] Alloy モデル `models/tsumugi-creative.als` 初版
   - [ ] Character, SceneView, StylePreset, **LoreEntry** の sig
   - [ ] Character の first_appearance 整合性
   - [ ] LoreEntry.scope Conditional の非空制約
-- [ ] oxidtr 生成フロー動作確認
+- [ ] oxidtr ([penta2himajin/oxidtr](https://github.com/penta2himajin/oxidtr)) 生成フロー動作確認
   - [ ] core と creative の分離生成
 - [ ] ワークスペース skeleton
   - [ ] `tsumugi-core/` の Cargo.toml + src/ 雛形
@@ -45,8 +46,10 @@
 
 - [ ] `tsumugi-core/src/domain/` 手書き拡張 (Alloy 生成 + 追加ロジック)
 - [ ] `tsumugi-core/src/creative/` 手書き拡張 (feature = "creative")
-- [ ] `SourceLocation` trait 定義
+- [ ] `SourceLocationValue` enum 定義 (core 同梱、`File` + `Custom { schema, payload }`)
+- [ ] `SourceLocation` trait 定義 (振る舞いの抽象、proximity 等)
 - [ ] `FileSourceLocation` 標準実装 (core 同梱)
+- [ ] `impl SourceLocation for SourceLocationValue` (variant ディスパッチ)
 - [ ] `StorageProvider` trait 定義 (core / creative 分離、LoreEntry/Character メソッドは `#[cfg]`)
 - [ ] `InMemoryStorage` 実装
 - [ ] 結合テスト (save / load / delete / list、feature on/off 両方)
