@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -Dwarnings
+
+jobs:
+  test:
+    name: cargo test (${{ matrix.features }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        features:
+          - "default"
+          - "all-features"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo fmt
+        run: cargo fmt --all -- --check
+      - name: cargo clippy
+        run: |
+          if [ "${{ matrix.features }}" = "all-features" ]; then
+            cargo clippy --workspace --all-features --all-targets
+          else
+            cargo clippy --workspace --all-targets
+          fi
+      - name: cargo test
+        run: |
+          if [ "${{ matrix.features }}" = "all-features" ]; then
+            cargo test --workspace --all-features
+          else
+            cargo test --workspace
+          fi
+
+  alloy-drift-check:
+    name: Alloy model drift check (oxidtr regen)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: tsumugi
+      - uses: actions/checkout@v4
+        with:
+          repository: penta2himajin/oxidtr
+          path: oxidtr
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            oxidtr
+            tsumugi
+      - name: Regenerate gen/ via oxidtr
+        working-directory: tsumugi
+        run: OXIDTR_HOME=${{ github.workspace }}/oxidtr ./scripts/regen.sh
+      - name: Diff committed gen/ against regeneration
+        working-directory: tsumugi
+        run: |
+          if ! git diff --exit-code tsumugi-core/src/gen/; then
+            echo "::error::gen/ is out of sync with models/. Run scripts/regen.sh locally and commit the result."
+            exit 1
+          fi

@@ -19,93 +19,111 @@
   - [x] `SourceLocation` を trait 化、core 標準実装 `FileSourceLocation` を同梱
   - [x] 入力→保存 / 選択的投入 / 要約非同期 の 3 処理パスを明文化
   - [x] `creative` は暫定名であり改名可能性を docs に記載
-- [ ] Alloy モデル `models/tsumugi-core.als` 初版
-  - [ ] Chunk, Fact, PendingItem の sig (LoreEntry は creative へ)
-  - [ ] 参照整合性の述語
-  - [ ] 階層非循環の不変条件
-  - [ ] **階層要約の不変条件** (`summary_level == 0` ⇒ items 非空、`> 0` ⇒ children 非空、親 > 子)
-  - [ ] PendingItem ライフサイクルの不変条件
-  - [ ] Fact supersession の非循環
-  - [ ] SourceLocation は抽象 sig として定義 (実装は Rust 側 trait)
-- [ ] Alloy モデル `models/tsumugi-creative.als` 初版
-  - [ ] Character, SceneView, StylePreset, **LoreEntry** の sig
-  - [ ] Character の first_appearance 整合性
-  - [ ] LoreEntry.scope Conditional の非空制約
-- [ ] oxidtr 生成フロー動作確認
-  - [ ] core と creative の分離生成
-- [ ] ワークスペース skeleton
-  - [ ] `tsumugi-core/` の Cargo.toml + src/ 雛形
-  - [ ] `creative` feature flag の設定
-  - [ ] `tsumugi-cli/` の Cargo.toml + main.rs 雛形
-  - [ ] `tsumugi-ts/` の package.json + tsconfig 雛形
+- [x] **`Chunk.source_location` 実装判断: B 案 (`SourceLocationValue` sum 型) 確定** (2026-04-23) — 詳細は `tech-architecture.md` §Phase 1 型定義時に決める実装判断
+- [x] **ワークスペース skeleton** (2026-04-23)
+  - [x] root `Cargo.toml` (workspace、共有依存定義)
+  - [x] `rust-toolchain.toml` (stable + rustfmt + clippy)
+  - [x] `tsumugi-core/` の Cargo.toml + src/ 雛形 (lib.rs, domain.rs, traits.rs, creative.rs)
+  - [x] `creative` feature flag 設定 (`#[cfg(feature = "creative")]` で creative モジュール gate)
+  - [x] `tsumugi-cli/` の Cargo.toml + main.rs 雛形
+  - [x] `tsumugi-ts/` の package.json + tsconfig + src/index.ts 雛形
+  - [x] `cargo check --all-features` が通ることを確認
+- [x] **Alloy モデル multi-file 初版** (2026-04-23) — oxidtr multi-file 対応を活用
+  - [x] `models/tsumugi.als` (main) — `module tsumugi`, `open tsumugi/{core,creative}`, クロスモジュール不変条件
+  - [x] `models/tsumugi/core.als` — Chunk, Fact, PendingItem, SourceLocationValue (File + Custom), SummaryMethod, FactScope, FactOrigin, Priority の sig
+  - [x] 階層非循環、親子逆関係、階層要約不変条件、要約メソッド整合 (Decision A)、Fact supersession 非循環
+  - [x] `models/tsumugi/creative.als` — Character, SceneView, StylePreset, LoreEntry, Formality, PoV, Tense, LoreScope の sig
+  - [x] oxidtr generate で Rust 出力確認 (`/tmp` で確認、生成物は未コミット)
+- [x] **Alloy 警告の棚卸しと対応** (2026-04-23) — 36 件 → 4 件 (false positive) まで削減
+  - [x] `edited_by_user` / `auto_update_locked` を Alloy から除去し Rust 側の runtime flag として扱う判断
+  - [x] `UnconstrainedCardinality` 警告に対する tautology fact 追加 (oxidtr self-host 慣例)
+  - [x] `UnreferencedSig` (SceneView / StylePreset / LoreEntry / LoreScope 変種) に対する `pred useX` マーク
+  - [x] `UnhandledResponsePattern` (File / Custom / GlobalScope / ChunkLocalScope) に対する `pred useX` マーク
+  - [x] `UnconstrainedTransitivity` (superseded_by) に対する直接 fact 追加
+  - [x] 残る `MissingInverse` (PendingItem.expected_resolution_chunk / resolved_at × Chunk.pending、計 4 件) は設計上の reference-only 関係で ownership link でないため false positive として受容、.als 内に rationale 記載
+- [x] **oxidtr 生成物の tsumugi-core への配置設計** (2026-04-23)
+  - [x] 生成先: `tsumugi-core/src/gen/` に確定
+  - [x] lib.rs で `#[path = "gen/tsumugi"] pub(crate) mod tsumugi { ... }` により型サブツリーのみを wire (scaffolding は未使用)
+  - [x] `creative` feature gate は `pub mod creative;` のモジュール全体 gate で実装
+  - [x] gen/ の型サブツリーはコミット (build-without-oxidtr を優先、IDE 互換性)
+  - [x] 生成 scaffolding (helpers / operations / newtypes / fixtures / tests / 最上位 mod.rs) は `.gitignore`
+  - [x] `scripts/regen.sh` で再生成 (oxidtr repo パス `--` / `OXIDTR_HOME` / デフォルト `../oxidtr`)
+- [x] **Alloy モデル 2 版** (2026-04-23)
+  - [x] PendingItem ライフサイクル不変条件 (`happens_before` 部分順序 + `resolved_at` / `expected_resolution_chunk` が `introduced_at` 以降)
+  - [x] LoreEntry.scope Conditional 非空制約 (Rust 側 `ConditionalScope` newtype で enforce、rationale を `.als` に記載)
+  - [x] `oxidtr check` を CI に組み込む判断: regen して `tsumugi-core/src/gen/` の diff を検知する形式を採用 (`.github/workflows/ci.yml` §`alloy-drift-check`)
+  - [ ] oxidtr scaffolding の再評価 (helpers の transitive closure walker、fixtures 等を選択的に wire するか — Phase 2 保留)
 
-## Phase 1: コア実装 (つかさ MVP と並行)
+## Phase 1: コア実装 (つかさ MVP と並行) — **完了 (2026-04-23)**
 
 ### A. 型定義とストレージ
 
-- [ ] `tsumugi-core/src/domain/` 手書き拡張 (Alloy 生成 + 追加ロジック)
-- [ ] `tsumugi-core/src/creative/` 手書き拡張 (feature = "creative")
-- [ ] `SourceLocation` trait 定義
-- [ ] `FileSourceLocation` 標準実装 (core 同梱)
-- [ ] `StorageProvider` trait 定義 (core / creative 分離、LoreEntry/Character メソッドは `#[cfg]`)
-- [ ] `InMemoryStorage` 実装
-- [ ] 結合テスト (save / load / delete / list、feature on/off 両方)
+- [x] `tsumugi-core/src/domain/` 手書き拡張 (Alloy 生成 + 追加ロジック)
+- [x] `tsumugi-core/src/creative/` 手書き拡張 (feature = "creative")
+- [x] `SourceLocationValue` enum 定義 (core 同梱、`File` + `Custom { schema, payload }`)
+- [x] `SourceLocation` trait 定義 (振る舞いの抽象、proximity 等)
+- [x] `FileSourceLocation` 標準実装 (core 同梱)
+- [x] `impl SourceLocation for SourceLocationValue` (variant ディスパッチ)
+- [x] `StorageProvider` trait 定義 (core / creative 分離、LoreEntry/Character メソッドは `#[cfg]`)
+- [x] `InMemoryStorage` 実装
+- [x] 結合テスト (save / load / delete / list、feature on/off 両方)
 
 ### B. Embedding / LLM
 
-- [ ] `EmbeddingProvider` trait 定義
-- [ ] `MockEmbedding` 実装
-- [ ] `LMStudioEmbedding` 実装
-- [ ] `LLMProvider` trait 定義
-- [ ] `OpenAICompatibleProvider` 実装 (LM Studio / Ollama 両対応)
-- [ ] `MockLLMProvider` 実装
+- [x] `EmbeddingProvider` trait 定義
+- [x] `MockEmbedding` 実装 (FNV-1a → L2 正規化、決定的)
+- [x] `LMStudioEmbedding` **stub** (Phase 1 は trait 面のみ、HTTP 配線は Phase 2)
+- [x] `LLMProvider` trait 定義 (`ModelMetadata` / `GrammarSpec` 込み)
+- [x] `OpenAICompatibleProvider` **stub** (Phase 1 は trait 面のみ、HTTP 配線は Phase 2)
+- [x] `MockLLMProvider` 実装 (prefix echo、決定的)
 
 ### C. 検索とスコアリング
 
-- [ ] `Retriever` trait 定義
-- [ ] lindera による BM25 実装
-- [ ] cosine 類似度実装
-- [ ] `HybridRetriever` 実装
-- [ ] `RelevanceScorer` trait 定義
-- [ ] `TemporalDecayScorer` 実装
-- [ ] `ChapterOrderScorer` 実装
-- [ ] `FileProximityScorer` 実装 (`SourceLocation::proximity` 利用)
-- [ ] `NoDecayScorer` 実装
-- [ ] `CompositeScorer` 実装
+- [x] `Retriever` trait 定義
+- [x] BM25 実装 (`Bm25Retriever` + pluggable `Tokenizer` trait、`WhitespaceTokenizer` 同梱、lindera 組み込みは Phase 2)
+- [x] cosine 類似度実装 (`EmbeddingVector::cosine` + `CosineRetriever`)
+- [x] `HybridRetriever` 実装 (スコア正規化後の重み付き合成)
+- [x] `RelevanceScorer` trait 定義
+- [x] `TemporalDecayScorer` 実装
+- [x] `ChapterOrderScorer` 実装
+- [x] `FileProximityScorer` 実装 (`SourceLocation::proximity` 利用)
+- [x] `NoDecayScorer` 実装
+- [x] `CompositeScorer` 実装
 
 ### D. イベント検知
 
-- [ ] `EventDetector` trait 定義
-- [ ] `KeywordDetector` 実装 (Tier 0)
-- [ ] `EmbeddingSimilarityDetector` 実装 (Tier 1)
-- [ ] `LLMClassifierDetector` 実装 (Tier 2-3)
-- [ ] `CascadeDetector` 実装
+- [x] `EventDetector` trait 定義 (`type Event`)
+- [x] `KeywordDetector` 実装 (Tier 0)
+- [x] `EmbeddingSimilarityDetector` 実装 (Tier 1)
+- [x] `LLMClassifierDetector` 実装 (Tier 2-3、MockLLMProvider で plumbing 検証)
+- [x] `CascadeDetector` 実装 (short-circuit)
 
-### E. ★新 3 trait (Phase 1 では最小実装)
+### E. ★新 3 trait
 
-- [ ] `QueryClassifier` trait 定義
-- [ ] `RegexClassifier` 実装 (Tier 0、正規表現ベース) ※ 日本語パターンは要検証項目
-- [ ] `PromptCompressor` trait 定義
-- [ ] `TruncateCompressor` 実装 (Tier 0、単純截断)
-- [ ] `Summarizer` trait 定義
-- [ ] `ExtractiveBM25Summarizer` 実装 (Tier 1)
+- [x] `QueryClassifier` trait 定義
+- [x] `RegexClassifier` 実装 (Tier 0、`regex` crate)
+- [x] `PromptCompressor` trait 定義 (`CompressionHint`)
+- [x] `TruncateCompressor` 実装 (Tier 0)
+- [x] `Summarizer` trait 定義
+- [x] `ExtractiveBM25Summarizer` 実装 (Tier 1、日本語/英語両対応の sentence splitter)
 
 ### F. Context Compiler
 
-- [ ] `CompiledContext` 型定義 (core / creative 分離)
-- [ ] 常駐レイヤー構築
-- [ ] 動的レイヤー構築 (`related_lore` は `#[cfg(feature = "creative")]`)
-- [ ] Optional な `QueryClassifier` / `PromptCompressor` の組み込み
-- [ ] 結合テスト: 小説シナリオ 1 本で context compile (creative feature)
-- [ ] 結合テスト: コーディングシナリオ 1 本で context compile (core のみ)
+- [x] `CompiledContext` 型定義 (core / creative 分離、`related_lore` は `#[cfg(feature = "creative")]`)
+- [x] 常駐レイヤー構築 (current chunk → parent chain)
+- [x] 動的レイヤー構築 (retrieve → rescore → top-k)
+- [x] Optional な `QueryClassifier` / `PromptCompressor` の組み込み
+- [x] 結合テスト: 小説シナリオで context compile + summarize (`tests/novel_scenario.rs`)
+- [x] 結合テスト: コーディングシナリオで context compile (`tests/coding_scenario.rs`)
 
 ### G. 結合テスト
 
-- [ ] TRPG シナリオ (CoC ミニセッション 3 シーン) の end-to-end
-- [ ] 小説シナリオ (短編 5 章分) の end-to-end
-- [ ] ツクールシナリオ (MZ プロジェクトでの裁定記憶) の end-to-end
-- [ ] つかさ / つづり / つくもからの依存導入確認 (`cargo tree`)
-- [ ] feature flag の組み合わせ検証 (default / creative)
+- [x] 小説シナリオ (4 章、Character + LoreEntry + ChapterOrderScorer) end-to-end
+- [x] コーディングシナリオ (6 ファイル、FileProximityScorer + Hybrid 検索) end-to-end
+- [x] feature flag の組み合わせ検証 (default / creative): `cargo test` / `cargo test --all-features` 両方 55 test 通過
+- [ ] TRPG シナリオ (つかさ MVP と並行実装、Phase 2 で回収)
+- [ ] ツクールシナリオ (つくも実装時、Phase 2 で回収)
+- [ ] つかさ / つづり / つくもからの依存導入確認 (`cargo tree`) — 下流 3 製品の着手時
 
 ## Phase 2: 上位製品統合と調整 (つかさリリース後)
 

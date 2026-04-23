@@ -4,7 +4,7 @@ Hierarchical narrative context middleware for creative AI agents. Common core fo
 
 ## Current Phase
 
-Phase 0. See `docs/concept.md` and `docs/tech-architecture.md` for specifications.
+Phase 1 complete (2026-04-23). All 9 core traits defined; Tier 0–1 implementations land with tests. Network-backed providers (`LmStudioEmbedding`, `OpenAiCompatibleProvider`) ship as trait-surface stubs; HTTP wiring is Phase 2. See `docs/concept.md`, `docs/tech-architecture.md`, `docs/TODO.md`.
 
 ## Tech Stack
 
