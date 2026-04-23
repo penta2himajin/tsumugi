@@ -777,6 +777,28 @@ let scorer = FileProximityScorer {
 - `SourceLocation::proximity` のシグネチャ (現状 f32 だが、異種比較の戻し方を検討)
 - `Summarizer::summarize` で複数 method を試す場合の合成ルール
 
+### Phase 1 型定義時に決める実装判断 (2026-04-23 追加)
+
+docs 整理中に浮上した、実装着手時点で具体判断が必要な論点:
+
+- **`Chunk.source_location: Option<Box<dyn SourceLocation>>` の持ち方**: `Box<dyn Trait>` は `Clone` / `Serialize` / `PartialEq` が自動導出できない。`Chunk` 自体は `Clone` + `Serialize` が必要 (storage / context compile のコピー / 永続化) のため、以下のいずれかを選ぶ必要がある:
+  - **A. dyn trait を保持**: `dyn-clone` + 手動 `Serialize` (tagged + `path`/`span`/`schema` フィールドで再構築) を実装する。拡張性は最も高いが手間。
+  - **B. sum 型に畳む**: `enum SourceLocationValue { File(FileSourceLocation), Custom { schema: String, payload: serde_json::Value } }` のようにして、製品独自実装は `Custom` 経由で serialize 済み payload を持つ。`SourceLocation` trait は `impl From<...> for SourceLocationValue` と変換で接続する。汎用性はやや下がるが serde / oxidtr との相性は最良。
+  - **C. ID ベース**: `Chunk` 側は `Option<SourceLocationId>` のみ持ち、実体は `StorageProvider` から引く。lookup コストが増えるため FileProximityScorer のような頻繁アクセスでは不利。
+
+  現時点では **B が有力** (creative / core 両方から使われ、serialize 境界がシンプル)。Phase 1 の Alloy 型定義と oxidtr 生成の前に最終判断する。
+- **`SummaryMethod::None` と `summary_level == 0` の整合**: Raw 葉 (`summary_level == 0`) は「まだ要約されていない」状態であり `summary_method == None` が自然だが、ランタイムで強制する方法が 2 通りある:
+  - **A. Alloy 不変条件 + ランタイム assert**: `summary_level = 0 iff summary_method = None` を Alloy で宣言、Rust 側は `Chunk::new_raw` / `Chunk::new_summary` のコンストラクタで担保。
+  - **B. 型レベルで分離**: `enum ChunkBody { Raw { items: Vec<Value> }, Summarized { level: NonZeroU32, method: SummaryMethod } }` のように代数的データ型で不正状態を排除。構造は堅いが、`Chunk` 全体が 2 variants に割れ、Retriever / Scorer のパターンマッチが増える。
+
+  **A を既定** とし、B は Phase 2 以降の不正状態が実際に頻発した場合に昇格を検討する。
+- **`ScoringContext<'a>` のライフタイム設計**: `current_location: Option<&'a dyn SourceLocation>` で参照を持たせたが、次の境界で扱いにくくなる懸念がある:
+  - `CompositeScorer(Vec<Box<dyn RelevanceScorer>>)` が内部で複数 Scorer に `ctx` を fan-out する場合、ライフタイム制約が伝播して co-routines / async task boundaries を越えにくい
+  - 非同期 Scorer (将来の `AsyncRelevanceScorer` 等) を導入すると `Send + 'static` が必要になり、`&'a dyn ...` は await を跨げない
+  - 選択肢: (a) そのまま参照で押し通し、非同期版は別 trait に分離 / (b) `Arc<dyn SourceLocation>` に退避して ownership を持たせる / (c) `current_location: Option<SourceLocationValue>` と上記 B 案を併用
+
+  Phase 1 結合テスト (特に `CompositeScorer` で複数 Scorer を合成するパス) で実測して判断する。
+
 ---
 
 *最終更新: 2026-04-23*
