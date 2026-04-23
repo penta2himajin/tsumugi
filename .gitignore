@@ -25,10 +25,18 @@ Thumbs.db
 
 # oxidtr scaffolding files — these are emitted alongside the types subtree
 # but are not wired into lib.rs (some have known broken codegen for our
-# Alloy patterns). Re-enable individually in Phase 1 if needed.
+# Alloy patterns). Re-enable individually in Phase 1+ if needed.
 tsumugi-core/src/gen/mod.rs
 tsumugi-core/src/gen/helpers.rs
 tsumugi-core/src/gen/operations.rs
 tsumugi-core/src/gen/newtypes.rs
 tsumugi-core/src/gen/fixtures.rs
 tsumugi-core/src/gen/tests.rs
+
+# tsumugi-ts oxidtr scaffolding — only models.ts and helpers.ts are wired
+# into the public surface. Others ship Error stubs or test fixtures we
+# don't use in Phase 3.
+tsumugi-ts/src/gen/operations.ts
+tsumugi-ts/src/gen/validators.ts
+tsumugi-ts/src/gen/fixtures.ts
+tsumugi-ts/src/gen/tests.ts

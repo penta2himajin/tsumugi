@@ -45,7 +45,25 @@ jobs:
             *) cargo test --workspace --features "${{ matrix.features }}" ;;
           esac
 
-  alloy-drift-check:
+  tsumugi-ts:
+    name: tsumugi-ts (typecheck + vitest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: bun install
+        working-directory: tsumugi-ts
+        run: bun install --frozen-lockfile
+      - name: typecheck
+        working-directory: tsumugi-ts
+        run: bun run typecheck
+      - name: vitest
+        working-directory: tsumugi-ts
+        run: bun run test
+
+  drift-check:
     name: Alloy model drift check (oxidtr regen)
     runs-on: ubuntu-latest
     steps:
@@ -57,18 +75,24 @@ jobs:
           repository: penta2himajin/oxidtr
           path: oxidtr
       - uses: dtolnay/rust-toolchain@stable
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: |
             oxidtr
             tsumugi
-      - name: Regenerate gen/ via oxidtr
+      - name: Install tsumugi-ts deps
+        working-directory: tsumugi/tsumugi-ts
+        run: bun install --frozen-lockfile
+      - name: Regenerate gen/ (Rust + TS) via oxidtr
         working-directory: tsumugi
         run: OXIDTR_HOME=${{ github.workspace }}/oxidtr ./scripts/regen.sh
       - name: Diff committed gen/ against regeneration
         working-directory: tsumugi
         run: |
-          if ! git diff --exit-code tsumugi-core/src/gen/; then
+          if ! git diff --exit-code tsumugi-core/src/gen/ tsumugi-ts/src/gen/; then
             echo "::error::gen/ is out of sync with models/. Run scripts/regen.sh locally and commit the result."
             exit 1
           fi
