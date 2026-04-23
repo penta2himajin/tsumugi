@@ -6,8 +6,9 @@
 - パッケージマネージャ: cargo, bun
 - ドメインモデル: [oxidtr](https://github.com/penta2himajin/oxidtr) (Alloy → Rust / TypeScript 型・テスト・不変条件)
 - テスト: Rust の `#[test]` + 結合テスト、TypeScript の vitest (SDK 段階)
-- 日本語トークナイザ: lindera (BM25 用)
-- ベクトル検索: 初期は InMemory、将来 sqlite-vec 検討
+- 日本語トークナイザ: `JapaneseCharTokenizer` (dict-free、script-run + Han bi-gram) が default。lindera 統合は build-time dict 配布方式の整理を待って Phase 3 で再着手
+- 永続化: `InMemoryStorage` (default) / `SqliteStorage` (`sqlite` feature、sqlx ベース)。sqlite-vec 統合は Phase 3 以降で性能プロファイル取得後
+- HTTP providers: `OpenAiCompatibleProvider` / `LmStudioEmbedding` が `network` feature で reqwest 配線。feature off 時は type-surface stub のみ (明示的エラー) で Mock に fallback できる
 
 推論ランタイム (上位製品での想定): Ollama (Apple Silicon で MLX バックエンド、2026-03〜) / LM Studio / llama.cpp。`LLMProvider` trait は OpenAI 互換 API をまず実装し、Ollama / LM Studio の両方を単一実装でカバーする。
 
