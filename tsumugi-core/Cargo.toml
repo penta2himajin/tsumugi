@@ -13,6 +13,10 @@ default = []
 # Creative domain extension (Character / SceneView / StylePreset / LoreEntry).
 # `creative` は暫定名。将来 `story` 等への改名可能性あり (docs/concept.md 参照)。
 creative = []
+# Enable reqwest-backed OpenAI-compatible LLM and LM Studio embedding providers.
+network = ["dep:reqwest"]
+# Enable sqlx + SQLite persistence (`SqliteStorage`).
+sqlite = ["dep:sqlx"]
 
 [dependencies]
 anyhow.workspace = true
@@ -25,5 +29,9 @@ thiserror.workspace = true
 tracing.workspace = true
 uuid.workspace = true
 
+reqwest = { workspace = true, optional = true }
+sqlx = { workspace = true, optional = true }
+
 [dev-dependencies]
 tokio.workspace = true
+wiremock.workspace = true

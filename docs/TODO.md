@@ -125,24 +125,35 @@
 - [ ] ツクールシナリオ (つくも実装時、Phase 2 で回収)
 - [ ] つかさ / つづり / つくもからの依存導入確認 (`cargo tree`) — 下流 3 製品の着手時
 
-## Phase 2: 上位製品統合と調整 (つかさリリース後)
+## Phase 2: 上位製品統合と調整 — **技術着地 (2026-04-23)**
 
-- [ ] つかさで実戦投入、frictions を記録
-- [ ] 抽出した friction から API 改善
-- [ ] つづり実装開始前に API 安定化
-- [ ] `SqliteStorage` 実装 (sqlx ベース)
-- [ ] sqlite-vec 統合検証
-- [ ] つくも実装でのフィードバック反映
-- [ ] `FileProximityScorer` の改良 (モジュール依存グラフベース)
+### 技術タスク (実装完了)
 
-### Phase 2 の拡張 trait 実装 (調査書 §8 の段階 2)
+- [x] `SqliteStorage` 実装 (sqlx ベース、`sqlite` feature) + CRUD 統合テスト
+- [x] HTTP-backed provider wiring (`OpenAiCompatibleProvider` / `LmStudioEmbedding`、`network` feature、reqwest + wiremock テスト)
+- [x] Japanese tokenizer: dict-free `JapaneseCharTokenizer` (script-run splitter + Han bi-gram)。lindera 統合は build-time 配布 dict の扱いが整った Phase 3 で再着手
+- [x] `FileProximityScorer` の改良 (モジュール依存グラフベース) — 見送り理由: 実運用データ不在で最適化対象が不透明、ast-parser 基盤が必要で重量級。Phase 3 以降で上位製品の use case が出てから着手
 
-- [ ] `LlmLinguaCompressor` 実装 (Tier 2、LLMLingua-2)
-- [ ] `SelectiveContextCompressor` 実装 (Tier 2)
-- [ ] `LlmSummarizer` 実装 (Tier 3)
-- [ ] `HierarchicalSummarizer` 実装 (level ごとに method 切替)
-- [ ] Summarizer パイプライン全体の検証 (階層要約の更新タイミング含む)
-- [ ] ユーザー編集済み要約保護の UX 検証 (`edited_by_user` / `auto_update_locked`)
+### Phase 2 の拡張 trait 実装 (調査書 §8 の段階 2) — 完了
+
+- [x] `LlmSummarizer` 実装 (Tier 3、`LLMProvider` 委譲)
+- [x] `HierarchicalSummarizer` 実装 (level ごとに summarizer 切替 + `method_for` で実際に適用された method を報告)
+- [x] `apply_summary_update` / `SummaryUpdate` / `SummaryUpdateOutcome` によるユーザー編集済み要約保護 (`edited_by_user` / `auto_update_locked` の 2 段ガード + `force_overwrite_user_edit` による明示リセット)
+- [x] `LlmLinguaCompressor` 実装 (Tier 2 近似、LLM 委譲)。paper-exact の XLM-RoBERTa 分類器版は Phase 3+ で Rust ML runtime (ort / candle) と合わせて再検討
+- [x] `SelectiveContextCompressor` 実装 (Tier 2 近似、sentence-level BM25 self-information)。paper-exact の decoder-LM log-prob 版は Phase 3+
+- [x] Summarizer パイプライン全体の検証 (`tests/hierarchical_summary_pipeline.rs` — level-dispatch → 保護ガード → 強制リセット → lock 優先)
+
+### 上位製品統合 (Phase 1 デリバラブル活用待ち)
+
+- [ ] つかさで実戦投入、frictions を記録 — つかさ MVP 着手待ち
+- [ ] 抽出した friction から API 改善 — 実データ必要
+- [ ] つづり実装開始前に API 安定化 — つづり着手待ち
+- [ ] つくも実装でのフィードバック反映 — つくも着手待ち
+
+### 見送り / Phase 3+ へ
+
+- [ ] sqlite-vec 統合検証 — crate ecosystem 成熟度待ち、`SqliteStorage` に後付けで追加可能な設計
+- [ ] `FileProximityScorer` モジュール依存グラフ — ast-parser 基盤が必要、上位製品 (つくも) の実運用データで判断
 
 ## Phase 3: TypeScript SDK と拡張分類器
 

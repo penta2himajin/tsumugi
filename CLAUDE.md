@@ -4,7 +4,7 @@ Hierarchical narrative context middleware for creative AI agents. Common core fo
 
 ## Current Phase
 
-Phase 1 complete (2026-04-23). All 9 core traits defined; Tier 0–1 implementations land with tests. Network-backed providers (`LmStudioEmbedding`, `OpenAiCompatibleProvider`) ship as trait-surface stubs; HTTP wiring is Phase 2. See `docs/concept.md`, `docs/tech-architecture.md`, `docs/TODO.md`.
+Phase 2 technical targets complete (2026-04-23). Network-backed providers now use reqwest (`network` feature), `SqliteStorage` ships via sqlx (`sqlite` feature), Tier 2–3 compressors / summarizers (LlmSummarizer, HierarchicalSummarizer, LlmLinguaCompressor, SelectiveContextCompressor) are wired, user-edit protection (`edited_by_user` / `auto_update_locked`) is enforced at the summarizer layer. Japanese BM25 ships with `JapaneseCharTokenizer` (dict-free); full lindera integration is deferred to Phase 3 pending dictionary distribution strategy. See `docs/TODO.md` for the complete status.
 
 ## Tech Stack
 

@@ -18,6 +18,9 @@ jobs:
       matrix:
         features:
           - "default"
+          - "creative"
+          - "network"
+          - "sqlite"
           - "all-features"
     steps:
       - uses: actions/checkout@v4
@@ -29,18 +32,18 @@ jobs:
         run: cargo fmt --all -- --check
       - name: cargo clippy
         run: |
-          if [ "${{ matrix.features }}" = "all-features" ]; then
-            cargo clippy --workspace --all-features --all-targets
-          else
-            cargo clippy --workspace --all-targets
-          fi
+          case "${{ matrix.features }}" in
+            default) cargo clippy --workspace --all-targets ;;
+            all-features) cargo clippy --workspace --all-features --all-targets ;;
+            *) cargo clippy --workspace --features "${{ matrix.features }}" --all-targets ;;
+          esac
       - name: cargo test
         run: |
-          if [ "${{ matrix.features }}" = "all-features" ]; then
-            cargo test --workspace --all-features
-          else
-            cargo test --workspace
-          fi
+          case "${{ matrix.features }}" in
+            default) cargo test --workspace ;;
+            all-features) cargo test --workspace --all-features ;;
+            *) cargo test --workspace --features "${{ matrix.features }}" ;;
+          esac
 
   alloy-drift-check:
     name: Alloy model drift check (oxidtr regen)

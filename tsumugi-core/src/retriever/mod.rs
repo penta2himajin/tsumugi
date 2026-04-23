@@ -8,4 +8,4 @@ mod tokenizer;
 pub use bm25::Bm25Retriever;
 pub use cosine::CosineRetriever;
 pub use hybrid::HybridRetriever;
-pub use tokenizer::{Tokenizer, WhitespaceTokenizer};
+pub use tokenizer::{JapaneseCharTokenizer, Tokenizer, WhitespaceTokenizer};
