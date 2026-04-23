@@ -4,4 +4,3 @@ pub enum FactOrigin {
     ExtractedOrigin,
     DerivedOrigin,
 }
-

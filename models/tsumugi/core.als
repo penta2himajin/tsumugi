@@ -29,7 +29,12 @@ sig Chunk {
   pending:         set PendingItem,
   source_location: lone SourceLocationValue,
   summary_method:  lone SummaryMethod,
-  summary_level:   one Int
+  summary_level:   one Int,
+  -- Temporal ordering. `happens_before` is a strict partial order over all
+  -- Chunks (transitive + irreflexive). On the Rust side this is induced by
+  -- creation timestamps on `last_active_at`. Alloy uses it to express
+  -- PendingItem lifecycle invariants without requiring a Time sig.
+  happens_before:  set Chunk
 }
 
 -------------------------------------------------------------------------------
@@ -176,12 +181,36 @@ pred useGlobalScope    [v: GlobalScope]    { v = v }
 pred useChunkLocalScope[v: ChunkLocalScope] { v = v }
 
 -------------------------------------------------------------------------------
+-- Temporal ordering invariants (happens_before)
+-------------------------------------------------------------------------------
+
+-- `happens_before` is transitive. Combined with NoCyclicHappensBefore this
+-- yields a strict partial order (antisymmetric, irreflexive, transitive).
+fact HappensBeforeTransitive {
+  all c: Chunk | c.happens_before.happens_before in c.happens_before
+}
+
+fact NoCyclicHappensBefore {
+  no c: Chunk | c in c.^happens_before
+}
+
+-------------------------------------------------------------------------------
 -- PendingItem lifecycle invariants
 --
--- TODO(Phase 0 refinement): encode `introduced_at ≤ resolved_at` once temporal
--- ordering is modeled on Chunk (e.g., via a creation-order relation or a
--- dedicated Time sig). Currently only the structural links are expressed.
+-- A PendingItem's resolution (resolved_at) must not precede its introduction
+-- (introduced_at). The expected_resolution_chunk is a forward-looking hint
+-- and therefore MUST also be at or after the introducer.
 -------------------------------------------------------------------------------
+
+fact PendingItemResolvedAtAfterIntroduction {
+  all pi: PendingItem | all r: pi.resolved_at |
+    r = pi.introduced_at or r in pi.introduced_at.happens_before
+}
+
+fact PendingItemExpectedResolutionAfterIntroduction {
+  all pi: PendingItem | all e: pi.expected_resolution_chunk |
+    e = pi.introduced_at or e in pi.introduced_at.happens_before
+}
 
 -------------------------------------------------------------------------------
 -- Cardinality tautologies — silence UnconstrainedCardinality warnings for
@@ -189,7 +218,8 @@ pred useChunkLocalScope[v: ChunkLocalScope] { v = v }
 -- Follows the oxidtr self-host convention (see oxidtr/models/oxidtr/ast.als).
 -------------------------------------------------------------------------------
 
-fact ChunkChildrenUnbounded { all c: Chunk | #c.children = #c.children }
-fact ChunkItemsUnbounded    { all c: Chunk | #c.items    = #c.items }
-fact ChunkFactsUnbounded    { all c: Chunk | #c.facts    = #c.facts }
-fact ChunkPendingUnbounded  { all c: Chunk | #c.pending  = #c.pending }
+fact ChunkChildrenUnbounded      { all c: Chunk | #c.children       = #c.children }
+fact ChunkItemsUnbounded         { all c: Chunk | #c.items          = #c.items }
+fact ChunkFactsUnbounded         { all c: Chunk | #c.facts          = #c.facts }
+fact ChunkPendingUnbounded       { all c: Chunk | #c.pending        = #c.pending }
+fact ChunkHappensBeforeUnbounded { all c: Chunk | #c.happens_before = #c.happens_before }

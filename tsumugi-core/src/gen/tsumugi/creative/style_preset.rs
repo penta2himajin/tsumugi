@@ -8,4 +8,3 @@ pub struct StylePreset {
     pub tense: Tense,
     pub formality: Formality,
 }
-

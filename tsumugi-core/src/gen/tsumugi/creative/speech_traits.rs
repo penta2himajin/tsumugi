@@ -4,4 +4,3 @@ use super::Formality;
 pub struct SpeechTraits {
     pub formality: Formality,
 }
-

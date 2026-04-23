@@ -9,4 +9,3 @@ pub struct Fact {
     pub superseded_by: Option<Box<Fact>>,
     pub origin: FactOrigin,
 }
-

@@ -4,4 +4,3 @@ pub enum PoV {
     SecondPerson,
     ThirdPerson,
 }
-

@@ -4,4 +4,3 @@ pub enum Formality {
     Neutral,
     Formal,
 }
-

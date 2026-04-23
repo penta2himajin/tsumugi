@@ -7,4 +7,3 @@ pub enum SummaryMethod {
     UserManual,
     NoMethod,
 }
-

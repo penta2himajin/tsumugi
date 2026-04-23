@@ -4,4 +4,3 @@ use super::LoreScope;
 pub struct LoreEntry {
     pub scope: LoreScope,
 }
-

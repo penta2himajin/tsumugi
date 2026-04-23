@@ -4,4 +4,3 @@ pub enum Priority {
     MediumPriority,
     HighPriority,
 }
-

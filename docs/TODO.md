@@ -48,81 +48,82 @@
   - [x] gen/ の型サブツリーはコミット (build-without-oxidtr を優先、IDE 互換性)
   - [x] 生成 scaffolding (helpers / operations / newtypes / fixtures / tests / 最上位 mod.rs) は `.gitignore`
   - [x] `scripts/regen.sh` で再生成 (oxidtr repo パス `--` / `OXIDTR_HOME` / デフォルト `../oxidtr`)
-- [ ] Alloy モデル 2 版 (Phase 0 → 1 移行前に着手)
-  - [ ] PendingItem ライフサイクル不変条件 (introduced_at ≤ resolved_at の時系列モデル化)
-  - [ ] LoreEntry.scope Conditional 非空制約 (opaque-string 扱いと併せて検討)
-  - [ ] oxidtr scaffolding の再評価 (helpers の transitive closure walker、fixtures 等を選択的に wire するか)
-  - [ ] `oxidtr check` を CI に組み込む判断 (現状は regen で `cargo check --all-features` まで走らせる)
+- [x] **Alloy モデル 2 版** (2026-04-23)
+  - [x] PendingItem ライフサイクル不変条件 (`happens_before` 部分順序 + `resolved_at` / `expected_resolution_chunk` が `introduced_at` 以降)
+  - [x] LoreEntry.scope Conditional 非空制約 (Rust 側 `ConditionalScope` newtype で enforce、rationale を `.als` に記載)
+  - [x] `oxidtr check` を CI に組み込む判断: regen して `tsumugi-core/src/gen/` の diff を検知する形式を採用 (`.github/workflows/ci.yml` §`alloy-drift-check`)
+  - [ ] oxidtr scaffolding の再評価 (helpers の transitive closure walker、fixtures 等を選択的に wire するか — Phase 2 保留)
 
-## Phase 1: コア実装 (つかさ MVP と並行)
+## Phase 1: コア実装 (つかさ MVP と並行) — **完了 (2026-04-23)**
 
 ### A. 型定義とストレージ
 
-- [ ] `tsumugi-core/src/domain/` 手書き拡張 (Alloy 生成 + 追加ロジック)
-- [ ] `tsumugi-core/src/creative/` 手書き拡張 (feature = "creative")
-- [ ] `SourceLocationValue` enum 定義 (core 同梱、`File` + `Custom { schema, payload }`)
-- [ ] `SourceLocation` trait 定義 (振る舞いの抽象、proximity 等)
-- [ ] `FileSourceLocation` 標準実装 (core 同梱)
-- [ ] `impl SourceLocation for SourceLocationValue` (variant ディスパッチ)
-- [ ] `StorageProvider` trait 定義 (core / creative 分離、LoreEntry/Character メソッドは `#[cfg]`)
-- [ ] `InMemoryStorage` 実装
-- [ ] 結合テスト (save / load / delete / list、feature on/off 両方)
+- [x] `tsumugi-core/src/domain/` 手書き拡張 (Alloy 生成 + 追加ロジック)
+- [x] `tsumugi-core/src/creative/` 手書き拡張 (feature = "creative")
+- [x] `SourceLocationValue` enum 定義 (core 同梱、`File` + `Custom { schema, payload }`)
+- [x] `SourceLocation` trait 定義 (振る舞いの抽象、proximity 等)
+- [x] `FileSourceLocation` 標準実装 (core 同梱)
+- [x] `impl SourceLocation for SourceLocationValue` (variant ディスパッチ)
+- [x] `StorageProvider` trait 定義 (core / creative 分離、LoreEntry/Character メソッドは `#[cfg]`)
+- [x] `InMemoryStorage` 実装
+- [x] 結合テスト (save / load / delete / list、feature on/off 両方)
 
 ### B. Embedding / LLM
 
-- [ ] `EmbeddingProvider` trait 定義
-- [ ] `MockEmbedding` 実装
-- [ ] `LMStudioEmbedding` 実装
-- [ ] `LLMProvider` trait 定義
-- [ ] `OpenAICompatibleProvider` 実装 (LM Studio / Ollama 両対応)
-- [ ] `MockLLMProvider` 実装
+- [x] `EmbeddingProvider` trait 定義
+- [x] `MockEmbedding` 実装 (FNV-1a → L2 正規化、決定的)
+- [x] `LMStudioEmbedding` **stub** (Phase 1 は trait 面のみ、HTTP 配線は Phase 2)
+- [x] `LLMProvider` trait 定義 (`ModelMetadata` / `GrammarSpec` 込み)
+- [x] `OpenAICompatibleProvider` **stub** (Phase 1 は trait 面のみ、HTTP 配線は Phase 2)
+- [x] `MockLLMProvider` 実装 (prefix echo、決定的)
 
 ### C. 検索とスコアリング
 
-- [ ] `Retriever` trait 定義
-- [ ] lindera による BM25 実装
-- [ ] cosine 類似度実装
-- [ ] `HybridRetriever` 実装
-- [ ] `RelevanceScorer` trait 定義
-- [ ] `TemporalDecayScorer` 実装
-- [ ] `ChapterOrderScorer` 実装
-- [ ] `FileProximityScorer` 実装 (`SourceLocation::proximity` 利用)
-- [ ] `NoDecayScorer` 実装
-- [ ] `CompositeScorer` 実装
+- [x] `Retriever` trait 定義
+- [x] BM25 実装 (`Bm25Retriever` + pluggable `Tokenizer` trait、`WhitespaceTokenizer` 同梱、lindera 組み込みは Phase 2)
+- [x] cosine 類似度実装 (`EmbeddingVector::cosine` + `CosineRetriever`)
+- [x] `HybridRetriever` 実装 (スコア正規化後の重み付き合成)
+- [x] `RelevanceScorer` trait 定義
+- [x] `TemporalDecayScorer` 実装
+- [x] `ChapterOrderScorer` 実装
+- [x] `FileProximityScorer` 実装 (`SourceLocation::proximity` 利用)
+- [x] `NoDecayScorer` 実装
+- [x] `CompositeScorer` 実装
 
 ### D. イベント検知
 
-- [ ] `EventDetector` trait 定義
-- [ ] `KeywordDetector` 実装 (Tier 0)
-- [ ] `EmbeddingSimilarityDetector` 実装 (Tier 1)
-- [ ] `LLMClassifierDetector` 実装 (Tier 2-3)
-- [ ] `CascadeDetector` 実装
+- [x] `EventDetector` trait 定義 (`type Event`)
+- [x] `KeywordDetector` 実装 (Tier 0)
+- [x] `EmbeddingSimilarityDetector` 実装 (Tier 1)
+- [x] `LLMClassifierDetector` 実装 (Tier 2-3、MockLLMProvider で plumbing 検証)
+- [x] `CascadeDetector` 実装 (short-circuit)
 
-### E. ★新 3 trait (Phase 1 では最小実装)
+### E. ★新 3 trait
 
-- [ ] `QueryClassifier` trait 定義
-- [ ] `RegexClassifier` 実装 (Tier 0、正規表現ベース) ※ 日本語パターンは要検証項目
-- [ ] `PromptCompressor` trait 定義
-- [ ] `TruncateCompressor` 実装 (Tier 0、単純截断)
-- [ ] `Summarizer` trait 定義
-- [ ] `ExtractiveBM25Summarizer` 実装 (Tier 1)
+- [x] `QueryClassifier` trait 定義
+- [x] `RegexClassifier` 実装 (Tier 0、`regex` crate)
+- [x] `PromptCompressor` trait 定義 (`CompressionHint`)
+- [x] `TruncateCompressor` 実装 (Tier 0)
+- [x] `Summarizer` trait 定義
+- [x] `ExtractiveBM25Summarizer` 実装 (Tier 1、日本語/英語両対応の sentence splitter)
 
 ### F. Context Compiler
 
-- [ ] `CompiledContext` 型定義 (core / creative 分離)
-- [ ] 常駐レイヤー構築
-- [ ] 動的レイヤー構築 (`related_lore` は `#[cfg(feature = "creative")]`)
-- [ ] Optional な `QueryClassifier` / `PromptCompressor` の組み込み
-- [ ] 結合テスト: 小説シナリオ 1 本で context compile (creative feature)
-- [ ] 結合テスト: コーディングシナリオ 1 本で context compile (core のみ)
+- [x] `CompiledContext` 型定義 (core / creative 分離、`related_lore` は `#[cfg(feature = "creative")]`)
+- [x] 常駐レイヤー構築 (current chunk → parent chain)
+- [x] 動的レイヤー構築 (retrieve → rescore → top-k)
+- [x] Optional な `QueryClassifier` / `PromptCompressor` の組み込み
+- [x] 結合テスト: 小説シナリオで context compile + summarize (`tests/novel_scenario.rs`)
+- [x] 結合テスト: コーディングシナリオで context compile (`tests/coding_scenario.rs`)
 
 ### G. 結合テスト
 
-- [ ] TRPG シナリオ (CoC ミニセッション 3 シーン) の end-to-end
-- [ ] 小説シナリオ (短編 5 章分) の end-to-end
-- [ ] ツクールシナリオ (MZ プロジェクトでの裁定記憶) の end-to-end
-- [ ] つかさ / つづり / つくもからの依存導入確認 (`cargo tree`)
-- [ ] feature flag の組み合わせ検証 (default / creative)
+- [x] 小説シナリオ (4 章、Character + LoreEntry + ChapterOrderScorer) end-to-end
+- [x] コーディングシナリオ (6 ファイル、FileProximityScorer + Hybrid 検索) end-to-end
+- [x] feature flag の組み合わせ検証 (default / creative): `cargo test` / `cargo test --all-features` 両方 55 test 通過
+- [ ] TRPG シナリオ (つかさ MVP と並行実装、Phase 2 で回収)
+- [ ] ツクールシナリオ (つくも実装時、Phase 2 で回収)
+- [ ] つかさ / つづり / つくもからの依存導入確認 (`cargo tree`) — 下流 3 製品の着手時
 
 ## Phase 2: 上位製品統合と調整 (つかさリリース後)
 

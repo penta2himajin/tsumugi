@@ -1,9 +1,9 @@
-use std::collections::{BTreeSet};
 use super::Fact;
 use super::Item;
 use super::PendingItem;
 use super::SourceLocationValue;
 use super::SummaryMethod;
+use std::collections::BTreeSet;
 
 /// Invariant: CharacterFirstAppearanceWellFormed
 /// Invariant: ParentToChildLink
@@ -14,10 +14,13 @@ use super::SummaryMethod;
 /// Invariant: ParentMoreAbstractThanChild
 /// Invariant: RawLeafHasNoMethod
 /// Invariant: SummaryNodeHasMethod
+/// Invariant: HappensBeforeTransitive
+/// Invariant: NoCyclicHappensBefore
 /// Invariant: ChunkChildrenUnbounded
 /// Invariant: ChunkItemsUnbounded
 /// Invariant: ChunkFactsUnbounded
 /// Invariant: ChunkPendingUnbounded
+/// Invariant: ChunkHappensBeforeUnbounded
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Chunk {
     pub parent: Option<Box<Chunk>>,
@@ -28,5 +31,5 @@ pub struct Chunk {
     pub source_location: Option<SourceLocationValue>,
     pub summary_method: Option<SummaryMethod>,
     pub summary_level: i64,
+    pub happens_before: BTreeSet<Chunk>,
 }
-
