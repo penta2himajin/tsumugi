@@ -4,7 +4,7 @@ Hierarchical narrative context middleware for creative AI agents. Common core fo
 
 ## Current Phase
 
-Phase 2 technical targets complete (2026-04-23). Network-backed providers now use reqwest (`network` feature), `SqliteStorage` ships via sqlx (`sqlite` feature), Tier 2–3 compressors / summarizers (LlmSummarizer, HierarchicalSummarizer, LlmLinguaCompressor, SelectiveContextCompressor) are wired, user-edit protection (`edited_by_user` / `auto_update_locked`) is enforced at the summarizer layer. Japanese BM25 ships with `JapaneseCharTokenizer` (dict-free); full lindera integration is deferred to Phase 3 pending dictionary distribution strategy. See `docs/TODO.md` for the complete status.
+Phase 3 complete (2026-04-23). `tsumugi-ts` ships with oxidtr-generated types + hand-written runtime types + Tauri IPC client helper (`createTauriClient`) + vitest harness. `BertClassifier` (LLM-delegation approximation; paper-exact BERT deferred to Phase 4+) and `IkeEmbedding` (binarization wrapper) added on the Rust side. CI now runs `tsumugi-ts` typecheck / vitest and the Alloy drift check covers both Rust and TypeScript gen subtrees. See `docs/TODO.md` for the complete status.
 
 ## Tech Stack
 

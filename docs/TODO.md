@@ -155,13 +155,32 @@
 - [ ] sqlite-vec 統合検証 — crate ecosystem 成熟度待ち、`SqliteStorage` に後付けで追加可能な設計
 - [ ] `FileProximityScorer` モジュール依存グラフ — ast-parser 基盤が必要、上位製品 (つくも) の実運用データで判断
 
-## Phase 3: TypeScript SDK と拡張分類器
+## Phase 3: TypeScript SDK と拡張分類器 — **完了 (2026-04-23)**
 
-- [ ] `tsumugi-ts/` の実装開始
-- [ ] oxidtr 生成型を活用した TS 側 API
-- [ ] Tauri IPC での Rust ↔ TS 型整合性確認
-- [ ] `BertClassifier` 実装 (Tier 1、MiniLM / ModernBERT ベース) ※ 調査書 §4.1 SelRoute 流
-- [ ] `IkeEmbeddingProvider` 実装 (Tier 1、二値化 embedding) ※ 調査書 §4.3
+### TS SDK (tsumugi-ts)
+
+- [x] `tsumugi-ts/` 本体実装。subpath export `tsumugi` / `tsumugi/creative` / `tsumugi/tauri` / `tsumugi/gen`
+- [x] oxidtr `--target ts` 生成型を `tsumugi-ts/src/gen/` に wire (models.ts + helpers.ts のみ、scaffolding は `.gitignore`)
+- [x] hand-written runtime 型: ChunkId / FactId / ... newtype (branded string)、Chunk / Fact / PendingItem の runtime shape、SourceLocationValue (rich discriminated union)、SummaryMethod、FactScope / LoreScope
+- [x] `creative` 拡張モジュール: Character / SceneView / StylePreset / LoreEntry + ConditionalScope (非空 newtype)
+- [x] Tauri IPC ヘルパー: `createTauriClient(invoke)` でプラットフォームの `invoke` を受け取り型付き client を生成。`TSUMUGI_COMMANDS` に command 名定数を集約 (Rust 側 `#[tauri::command]` と 1:1)
+- [x] vitest harness + 20 tests (domain + Tauri client mock invoke)
+
+### 拡張 trait 実装
+
+- [x] `BertClassifier` 実装: Phase 3 は LLM-delegation 近似版 (paper-exact の MiniLM / ModernBERT 推論は Rust ML runtime 導入後の Phase 4+)。`QueryClassifier` trait 面は同一、label set 互換なので後日差し替え可能
+- [x] `IkeEmbeddingProvider` 実装 (`IkeEmbedding`): 任意の `EmbeddingProvider` をラップし ±1 に binarize。`EmbeddingVector::cosine` がそのまま Hamming-like スコアとして使える。Phase 4 で `u64` bit packing 最適化を検討
+
+### CI / 再生成
+
+- [x] `scripts/regen.sh` を Rust + TS 両方生成するよう拡張 (oxidtr `--target ts` を staging → models.ts/helpers.ts のみコピー、TS scaffolding は `.gitignore`)
+- [x] `.github/workflows/ci.yml` に `tsumugi-ts` job 追加 (bun install + typecheck + vitest)、drift-check も TS gen/ を含む
+
+### Phase 4+ への持ち越し
+
+- [ ] BertClassifier の paper-exact 実装 (candle / ort 統合 + MiniLM / ModernBERT 重み配布)
+- [ ] IkeEmbedding の `u64` bit packing 最適化 (retrieval hot path でメモリと SIMD を活用)
+- [ ] Tauri プラグイン crate の追加 (現状は下流製品側で `#[tauri::command]` を手動定義する前提)
 
 ## Phase 4: 拡張 (実需次第)
 
