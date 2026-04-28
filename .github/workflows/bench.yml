@@ -53,6 +53,10 @@ jobs:
       - name: Install llama.cpp release
         env:
           LLAMA_CPP_TAG: ${{ inputs.llama_cpp_tag }}
+          # api.github.com の anonymous rate-limit (60/h) を回避するため
+          # token を渡す。read-only で十分なので default の GITHUB_TOKEN
+          # で OK。
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: ./benches/scripts/install_llama_cpp.sh
 
       - name: Download models (Qwen3.5-4B-Instruct + multilingual-e5-small)
