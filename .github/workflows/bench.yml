@@ -1,7 +1,8 @@
-name: Bench (Phase 4-α Step 1 smoke)
+name: Bench (Phase 4-α Step 1-2)
 
-# Phase 4-α Step 1 v0 smoke: Qwen3.5-4B-Instruct のみで起動健全性 +
-# 生成速度 + 簡易指示追従を検証する。
+# Phase 4-α:
+#   Step 1 v0 smoke (health): LLM 起動健全性 + 生成速度 + 簡易指示追従
+#   Step 2 (oracle): LongMemEval_oracle 30 問 (層化抽出、規則ベース primary)
 #
 # - schedule (nightly) は **未設定**。Step 1 smoke が安定するまでは
 #   workflow_dispatch のみで起動する (計画書方針通り、PR では走らない)。
@@ -13,11 +14,12 @@ on:
   workflow_dispatch:
     inputs:
       suite:
-        description: 'Benchmark suite (Step 1 では health のみ実装)'
+        description: 'Benchmark suite'
         required: true
         type: choice
         options:
           - health
+          - oracle
         default: health
       llama_cpp_tag:
         description: 'llama.cpp release tag (default: latest)'
@@ -25,7 +27,7 @@ on:
         type: string
         default: latest
       qwen_revision:
-        description: 'HF revision for Qwen3.5-4B-Instruct GGUF (default: main)'
+        description: 'HF revision for Qwen3.5-4B GGUF (default: main)'
         required: false
         type: string
         default: main
@@ -59,10 +61,14 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: ./benches/scripts/install_llama_cpp.sh
 
-      - name: Download models (Qwen3.5-4B-Instruct + multilingual-e5-small)
+      - name: Download models (Qwen3.5-4B GGUF + multilingual-e5-small)
         env:
           QWEN_REVISION: ${{ inputs.qwen_revision }}
         run: ./benches/scripts/download_models.sh
+
+      - name: Download datasets (LongMemEval oracle)
+        if: inputs.suite == 'oracle'
+        run: ./benches/scripts/download_datasets.sh
 
       - name: Build runner with network feature
         run: cargo build --release -p tsumugi-bench --features network
@@ -93,10 +99,15 @@ jobs:
           echo "=== /tmp / disk usage ==="
           df -h /tmp / 2>/dev/null || true
 
-      - name: Run health smoke
+      - name: Run bench
+        env:
+          # Step 2 の oracle adapter は LONGMEMEVAL_PATH を読む。
+          # download_datasets.sh が `benches/data/longmemeval_oracle` に
+          # symlink を張っている。
+          LONGMEMEVAL_PATH: ${{ github.workspace }}/benches/data/longmemeval_oracle
         run: |
           ./target/release/tsumugi-bench \
-            --suite health \
+            --suite ${{ inputs.suite }} \
             --output benches/results/${{ github.run_id }} \
             --llm-base-url http://localhost:8080/v1 \
             --llm-model Qwen3.5-4B-Instruct
@@ -105,7 +116,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: bench-health-${{ github.run_id }}
+          name: bench-${{ inputs.suite }}-${{ github.run_id }}
           path: |
             benches/results/
             llama-server.log

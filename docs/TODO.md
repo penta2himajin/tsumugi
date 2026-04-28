@@ -199,19 +199,26 @@
 - [x] **v0 smoke 実装**: `Suite::Health` (LLM 起動健全性 + 生成速度 + 簡易指示追従の 2 probes × 3 trials)
   - `benches/runner/src/health.rs` + wiremock 駆動の単体テスト 3 本
   - `.github/workflows/bench.yml` (workflow_dispatch のみ、schedule 未設定)
-- [ ] **主候補 smoke test 実施**: Qwen3.5-4B-Instruct を 4 vCPU runner で実機検証
-  - 当面 Qwen のみ評価 (ユーザー方針、2026-04-28)。Gemma 4 E4B-it 並列評価は smoke 安定後に別 PR で再導入
-  - 起動成功率 (3 回連続)、tok/s、簡易指示追従 (`Health` suite で計測)
-  - RULER NIAH-S 4K/16K/32K と LongMemEval_oracle 5 問の指示追従評価は Step 2-3 で追加
-  - 結果を `benches/smoke-test-result.md` に記録
+- [x] **主候補 smoke test 実施** (2026-04-28、PR #11-#16 経由): Qwen3.5-4B (unsloth GGUF) で
+      実機 smoke 成功。`/health` ok まで 12 秒、6 cases (2 probes × 3 trials) 完走
+  - Gemma 4 E4B-it 並列評価は smoke 安定後に別 PR で再導入 (ユーザー方針、2026-04-28)
+  - tok/s と probe 正答率の数値は artifact (`bench-health-<run_id>.zip`) 内 jsonl で記録
+  - PR 履歴: #11 (jq+TOKEN) → #12 (.tar.gz) → #13 (hf CLI) → #14 (Qwen repo path) →
+    #15 (5-in-1: diagnostic + cache reuse + 600s + unsloth + e5 --include) → #16 (flatten)
+  - TODO: 結果を `benches/smoke-test-result.md` に正式記録 (Step 2 と並行)
 
-### Step 2: LongMemEval_oracle 動作確認
+### Step 2: LongMemEval_oracle 動作確認 — **着手中 (2026-04-28)**
 
-- [ ] LongMemEval HF dataset の Rust 側ローダー (`benches/runner/src/adapters/longmemeval.rs`)
-- [ ] 30 問の層化抽出ロジック (6 question type × 5 問、seed 固定)
-- [ ] 規則ベース primary metric (substring match)
-- [ ] LLM judge secondary metric (主候補 LLM、簡易 prompt)
-- [ ] ローカルでの動作確認 (CI 投入前)
+- [x] LongMemEval HF dataset の Rust 側ローダー (`benches/runner/src/adapters/longmemeval.rs`、
+      `xiaowu0162/longmemeval` datasets API から `longmemeval_oracle` を取得して JSON parse)
+- [x] 30 問の層化抽出ロジック (6 question type × 5 問、seed 固定 FNV-1a)
+- [x] 規則ベース primary metric (substring match、metrics.rs 既存実装を流用)
+- [x] `download_datasets.sh` を LongMemEval 取得用に実装 (hf download `--repo-type dataset`)
+- [x] `bench.yml` に `oracle` suite option + dataset download step を追加
+- [x] 単体テスト: stratified sample × 3 (count/determinism/fallback)、prompt builder × 1、
+      wiremock 駆動の network test × 3 (run/error/aggregate)
+- [ ] **実機 smoke 実施**: `gh workflow run bench.yml -f suite=oracle` で 30 問完走確認
+- [ ] LLM judge secondary metric (主候補 LLM、簡易 prompt) — paper-exact 再現要時に別 PR
 
 ### Step 3: MemoryAgentBench CR + RULER NIAH-S 統合
 
