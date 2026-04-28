@@ -1,68 +1,148 @@
 # Tsumugi
 
-Hierarchical narrative context middleware for creative AI agents. Common core for Tsukasa (TRPG GM aid) and Tsuzuri (novel writing aid). Shares design philosophy with Chatstream but targets text-based creative domains.
+## Overview
 
-## Current Phase
+Tsumugi is a domain-agnostic context management middleware for LLM
+applications. The core engine treats conversations and passages as a
+hierarchy of `Chunk`s with summarisation, query classification, and
+prompt compression abstractions; creative-domain types (Character,
+Scene, LoreEntry, StylePreset) live behind the `creative` feature flag
+and are not part of the core API. Upstream consumers include Tsukasa
+(TRPG GM aid), Tsuzuri (novel writing aid), and Tsukumo (RPG Maker
+project assistant).
 
-Phase 3 complete (2026-04-23). `tsumugi-ts` ships with oxidtr-generated types + hand-written runtime types + Tauri IPC client helper (`createTauriClient`) + vitest harness. `BertClassifier` (LLM-delegation approximation; paper-exact BERT deferred to Phase 4+) and `IkeEmbedding` (binarization wrapper) added on the Rust side. CI now runs `tsumugi-ts` typecheck / vitest and the Alloy drift check covers both Rust and TypeScript gen subtrees. See `docs/TODO.md` for the complete status.
+The `docs/` directory is the source of truth for design and
+specification (`concept.md`, `tech-architecture.md`,
+`context-management-survey.md`, `TODO.md`). This file only covers the
+workflow contracts that are not in `docs/`.
 
-## Tech Stack
-
-- Implementation: Rust + TypeScript (skeleton generated via `oxidtr`)
-- Domain model: `oxidtr` (Alloy → Rust / TypeScript types, tests, invariants)
-- Embedding: trait-abstracted (external embedding API / local model)
-- Storage: trait-abstracted (initial in-memory impl)
-- LLM provider: trait-abstracted (LM Studio / Ollama / cloud APIs)
-
-## Workspace Structure
+## Project Structure
 
 ```
-tsumugi/
-├── tsumugi-core/        # Core library — domain, traits, context compiler
-├── tsumugi-cli/          # Development / verification REPL
-├── tsumugi-ts/           # TypeScript SDK (later)
-└── models/               # Alloy source of truth (oxidtr input)
+tsumugi-core/   # Core library — domain model, traits, context compiler
+tsumugi-cli/    # Development / verification REPL
+tsumugi-ts/     # TypeScript SDK (oxidtr-generated types + runtime)
+models/         # Alloy source of truth (oxidtr input)
+docs/           # Design specifications and research surveys
+scripts/        # Codegen / drift-check helpers
 ```
 
-## Design Principles
+## Development Setup
 
-- All conversation / passage data is retained. Hierarchy is an index, not a compression artifact.
-- Creative-first design: novel chapters, TRPG scenes, game scripts are first-class.
-- Library-first: core is a crate. Server / Tauri adapters are optional downstream layers.
-- Storage, Embedding, LLM Provider are abstracted as traits; implementations are swappable.
-- Deterministic codegen where possible: skeleton from Alloy via oxidtr, business logic written by hand.
+Toolchain pins live in `rust-toolchain.toml` (Rust) and `package.json`
+(TypeScript / Bun). No additional bootstrap is required beyond:
 
-## Development Workflow
+```bash
+rustup show                  # honours rust-toolchain.toml
+bun install                  # tsumugi-ts dependencies
+```
 
-- Commit after verified step (all tests pass, no warnings).
+Alloy and `oxidtr` are required for type regeneration. `oxidtr` is
+expected as a sibling clone (`../oxidtr`) or supplied via
+`OXIDTR_HOME=…`.
 
-### TDD (Red-Green-Refactoring)
+## Build & Test
 
-Every feature / fix follows the cycle:
+```bash
+cargo build --workspace
+cargo test  --workspace
+cargo test  --workspace --features creative
+bun run --cwd tsumugi-ts typecheck
+bun run --cwd tsumugi-ts test
+```
 
-1. **Red**: write a failing test first.
-2. **Green**: write the minimum code that passes.
-3. **Refactor**: improve while staying green.
+CI runs the Alloy drift check across both Rust and TypeScript
+generated subtrees; regenerate locally before committing changes that
+touch `models/`.
 
-No implementation commit without a test.
+## Development Principle: TDD (Red → Green → Refactor)
+
+All implementation work proceeds in this cycle:
+
+1. **Red**: write a failing test that captures the intended behaviour;
+   confirm it fails for the right reason with `cargo test`.
+2. **Green**: write the minimum code that makes the test pass.
+3. **Refactor**: tidy up while keeping tests green.
+
+No implementation commit without an accompanying test. Follow the
+phase order in [`docs/TODO.md`](./docs/TODO.md); do not start a phase
+before the previous one's done-criteria are met.
+
+## Architectural Boundaries
+
+- **Core stays domain-agnostic.** `tsumugi-core` exposes a
+  general-purpose context API. Creative-domain types (Character,
+  Scene, LoreEntry, StylePreset) are gated behind the `creative`
+  feature and must not leak into the default-feature API surface.
+- **Full history is retained; injection is selective.** All
+  conversation / passage data stays in storage. LLM inputs are
+  compiled selectively from the hierarchy — never a full-history
+  dump.
+- **Tiered processing escalates only when needed.** Prefer
+  Tier 0 (deterministic / BM25) → Tier 1 (small classifiers /
+  encoders) → Tier 2 (lightweight encoder compression) → Tier 3
+  (full LLM calls). Do not call out to an LLM where a deterministic
+  or lightweight model suffices.
+- **Storage, embedding, and LLM provider are trait-abstracted.**
+  `tsumugi-core` does not depend on a concrete vector DB, embedding
+  API, or LLM client. In-memory implementations are the test default.
+- **Newtype IDs are not bypassed.** `ChunkId`, `TurnId`,
+  `CharacterId`, etc. are wrapper types; do not pass raw strings or
+  integers through them.
+- **Alloy models are canonical.** `models/` drives generated Rust and
+  TypeScript types via oxidtr. Do not hand-edit files under any
+  `gen/` directory.
 
 ## Prohibitions
 
-1. **No deleting / skipping / commenting out existing tests.**
-2. **No unauthorized CI config changes** without explicit user instruction.
-3. **No degrading production code to make tests pass.**
+1. **Do not delete or disable existing tests.** If a test fails, fix
+   the production code, not the test. Skipping or commenting out
+   tests is not acceptable.
+2. **Do not commit credentials or provider API keys.** Local LLM
+   endpoints are fine; cloud provider keys, embedding API keys, and
+   anything in `.env*` files stay out of the repository.
+3. **Do not modify CI configuration without explicit instruction.**
+   Files under `.github/workflows/` are not changed without the user
+   asking for it.
+4. **Do not bypass the phase order.** `docs/TODO.md` defines the
+   build sequence and done-criteria. Do not write later-phase code
+   before the current phase is verified, even if it looks ready.
+5. **Do not leak `creative` types into the default-feature API.**
+   Anything domain-specific must compile out cleanly when the
+   `creative` feature is disabled.
+6. **Do not edit oxidtr-generated files directly.** Regenerate via
+   the appropriate script after editing the relevant Alloy model.
 
-## Commands
+## Git Conventions
 
-```bash
-cargo <cmd>              # Rust
-bun run <script>         # Node / Bun
-npx <cmd>                # npx
-```
+- **Conventional Commits**: `feat:`, `fix:`, `docs:`, `refactor:`,
+  `test:`, `ci:`, `chore:`.
+- **Branch naming**: `claude/<topic>` for Claude-driven work.
+- **Tests must pass and warnings must be zero before committing.**
+- **Append a `Co-Authored-By` trailer** to commits Claude authors,
+  for transparency:
 
-## Notes for Claude sessions
+  ```
+  Co-Authored-By: Claude <noreply@anthropic.com>
+  ```
 
-- Alloy models under `models/` are the source of truth. Do not edit generated Rust / TS types directly; regenerate via oxidtr.
-- `ChunkId`, `TurnId`, `CharacterId`, etc. are newtype-wrapped IDs; do not bypass.
-- Async traits use `async-trait` or Rust 1.75+ RPITIT.
-- In-memory implementations are used in tests for external-dependency-free fast iteration.
+- Documentation-only changes go in `docs:` commits; mixed code +
+  documentation changes are split into separate commits where it does
+  not break atomicity.
+
+## Claude Session Guidance
+
+Claude Code cloud sessions occasionally fail with `Stream idle
+timeout` on long output. To reduce the risk:
+
+1. **Stage long writes.** For long documents or source files, write
+   the skeleton (headings, function signatures, trait stubs) first,
+   then fill each section in follow-up edits. Avoid single blocks
+   larger than ~200 lines.
+2. **Watch out after large reads.** Reading a big file (e.g.
+   `Cargo.lock`, large generated modules) and then immediately
+   producing long output is a common trigger. Split into separate
+   turns or excerpt only the relevant portion.
+3. **Recover carefully.** A timeout can still leave the file write
+   completed. Run `git status` before retrying so the same content is
+   not written twice.
