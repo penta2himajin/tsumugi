@@ -21,6 +21,7 @@ impl SuiteReport {
     pub fn new(suite: Suite) -> Self {
         Self {
             suite: match suite {
+                Suite::Health => "health",
                 Suite::Smoke => "smoke",
                 Suite::Oracle => "oracle",
                 Suite::Cr => "cr",

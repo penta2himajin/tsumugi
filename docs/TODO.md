@@ -190,16 +190,20 @@
 
 ### Step 1: Runner skeleton + 主候補 smoke test
 
-- [ ] `tsumugi-core` `onnx` feature 追加 + `OnnxEmbedding` trait 面 (実装は ort 統合と並行)
-- [ ] `benches/runner/` Cargo binary crate 作成 (workspace member、`tsumugi-core` 依存)
-- [ ] `benches/scripts/install_llama_cpp.sh` (release バイナリ pin、Qwen3.5 が動く master 系)
-- [ ] `benches/scripts/download_datasets.sh` / `download_models.sh` (HF revision pin、両 LLM 候補)
-- [ ] `benches/scripts/start_llama_server.sh` / `wait_for_health.sh` (モデル切替対応)
-- [ ] **主候補 smoke test**: Qwen3.5-4B-Instruct と Gemma 4 E4B-it を 4 vCPU runner で並列評価
-  - 起動成功率 (3 回連続)、tok/s、RULER NIAH-S 4K/16K/32K 正答率、LongMemEval_oracle 5 問の指示追従
+- [x] `tsumugi-core` `onnx` feature 追加 + `OnnxEmbedding` trait 面 (PR #9, 2026-04-28、実装は ort 統合と並行)
+- [x] `benches/runner/` Cargo binary crate 作成 (PR #9, workspace member、`tsumugi-core` 依存)
+- [x] `benches/scripts/install_llama_cpp.sh` (release バイナリ取得、`LLAMA_CPP_TAG` env var で pin、デフォルト latest)
+- [x] `benches/scripts/download_datasets.sh` / `download_models.sh` skeleton (PR #9 で追加、Step 2 で本格的にデータ取得を埋める)
+- [x] `benches/scripts/start_llama_server.sh` / `wait_for_health.sh` (Qwen 専用に絞り込み、2026-04-28)
+- [x] `THIRD_PARTY_LICENSES.md` 雛形 (PR #9, 両 LLM 候補 + e5-small + bge-small-en の attribution)
+- [x] **v0 smoke 実装**: `Suite::Health` (LLM 起動健全性 + 生成速度 + 簡易指示追従の 2 probes × 3 trials)
+  - `benches/runner/src/health.rs` + wiremock 駆動の単体テスト 3 本
+  - `.github/workflows/bench.yml` (workflow_dispatch のみ、schedule 未設定)
+- [ ] **主候補 smoke test 実施**: Qwen3.5-4B-Instruct を 4 vCPU runner で実機検証
+  - 当面 Qwen のみ評価 (ユーザー方針、2026-04-28)。Gemma 4 E4B-it 並列評価は smoke 安定後に別 PR で再導入
+  - 起動成功率 (3 回連続)、tok/s、簡易指示追従 (`Health` suite で計測)
+  - RULER NIAH-S 4K/16K/32K と LongMemEval_oracle 5 問の指示追従評価は Step 2-3 で追加
   - 結果を `benches/smoke-test-result.md` に記録
-  - 計画書「選択」セクションの判定ロジックで主候補確定
-- [ ] `THIRD_PARTY_LICENSES.md` 雛形 (両 LLM 候補 + e5-small + bge-small-en の attribution)
 
 ### Step 2: LongMemEval_oracle 動作確認
 

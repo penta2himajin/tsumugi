@@ -2145,6 +2145,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tsumugi-core",
+ "wiremock",
 ]
 
 [[package]]

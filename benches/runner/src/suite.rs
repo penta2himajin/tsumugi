@@ -7,7 +7,11 @@ use std::str::FromStr;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Suite {
-    /// RULER NIAH-S 5 ケースのみ。CI smoke に使う最短経路。
+    /// Phase 4-α Step 1 v0 smoke: LLM 起動健全性 + 生成速度 (tok/s) +
+    /// 簡易指示追従。RULER / LongMemEval を呼ばないため llama-server を
+    /// 立ち上げただけの環境で 1-2 分で完走する。
+    Health,
+    /// RULER NIAH-S 5 ケースのみ。CI smoke (Step 3 で実装) に使う最短経路。
     Smoke,
     /// LongMemEval_oracle 30 問。
     Oracle,
@@ -21,11 +25,14 @@ impl FromStr for Suite {
     type Err = anyhow::Error;
     fn from_str(s: &str) -> anyhow::Result<Self> {
         Ok(match s {
+            "health" => Suite::Health,
             "smoke" => Suite::Smoke,
             "oracle" => Suite::Oracle,
             "cr" => Suite::Cr,
             "all" => Suite::All,
-            other => anyhow::bail!("unknown suite `{other}` (expected: smoke|oracle|cr|all)"),
+            other => {
+                anyhow::bail!("unknown suite `{other}` (expected: health|smoke|oracle|cr|all)")
+            }
         })
     }
 }
@@ -54,21 +61,24 @@ pub struct SuiteRunOptions {
     pub suite: Suite,
     pub output_dir: PathBuf,
     pub llm_base_url: String,
+    pub llm_model: String,
     pub help: bool,
 }
 
 impl SuiteRunOptions {
     pub fn usage() -> &'static str {
-        "Usage: tsumugi-bench --suite <smoke|oracle|cr|all> --output <dir> \
-         [--llm-base-url <url>] [--help]\n\n\
-         Phase 4-α Step 1 では adapter 群はまだ実装中で、\
-         どの suite を選んでも \"not yet implemented\" を返します。"
+        "Usage: tsumugi-bench --suite <health|smoke|oracle|cr|all> --output <dir> \
+         [--llm-base-url <url>] [--llm-model <name>] [--help]\n\n\
+         Phase 4-α Step 1: --suite health のみ実装済み \
+         (LLM 起動健全性 + 生成速度 + 簡易指示追従)。他の suite は \
+         Step 2-3 で順次実装。"
     }
 
     pub fn parse(args: &[String]) -> anyhow::Result<Self> {
         let mut suite: Option<Suite> = None;
         let mut output_dir: Option<PathBuf> = None;
         let mut llm_base_url = String::from("http://localhost:8080/v1");
+        let mut llm_model = String::from("Qwen/Qwen3.5-4B-Instruct");
         let mut help = false;
         let mut iter = args.iter();
         while let Some(arg) = iter.next() {
@@ -91,6 +101,12 @@ impl SuiteRunOptions {
                         .ok_or_else(|| anyhow::anyhow!("--llm-base-url requires a value"))?;
                     llm_base_url = v.clone();
                 }
+                "--llm-model" => {
+                    let v = iter
+                        .next()
+                        .ok_or_else(|| anyhow::anyhow!("--llm-model requires a value"))?;
+                    llm_model = v.clone();
+                }
                 "--help" | "-h" => {
                     help = true;
                 }
@@ -99,9 +115,10 @@ impl SuiteRunOptions {
         }
         if help {
             return Ok(Self {
-                suite: Suite::Smoke,
+                suite: Suite::Health,
                 output_dir: PathBuf::new(),
                 llm_base_url,
+                llm_model,
                 help: true,
             });
         }
@@ -109,6 +126,7 @@ impl SuiteRunOptions {
             suite: suite.ok_or_else(|| anyhow::anyhow!("--suite is required"))?,
             output_dir: output_dir.ok_or_else(|| anyhow::anyhow!("--output is required"))?,
             llm_base_url,
+            llm_model,
             help: false,
         })
     }
@@ -118,6 +136,9 @@ impl Suite {
     pub async fn run(&self, opts: &SuiteRunOptions) -> anyhow::Result<SuiteReport> {
         let mut report = SuiteReport::new(*self);
         match self {
+            Suite::Health => {
+                report.add_section(crate::health::run_health(opts).await?);
+            }
             Suite::Smoke => {
                 report.add_section(adapters::ruler::run_niah_s(opts).await?);
             }
