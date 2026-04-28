@@ -55,7 +55,7 @@ fi
 echo "Available assets in this release:"
 jq -r '.assets[]?.name' "${JSON_FILE}" | sed 's/^/  /' | head -30
 
-ASSET_NAME_PATTERN="llama-.*-bin-${PLATFORM}\\.zip$"
+ASSET_NAME_PATTERN="llama-.*-bin-${PLATFORM}\\.tar\\.gz$"
 ASSET_URL=$(jq -r --arg pat "${ASSET_NAME_PATTERN}" \
   '.assets[]? | select(.name | test($pat)) | .browser_download_url' \
   "${JSON_FILE}" \
@@ -68,12 +68,13 @@ if [[ -z "${ASSET_URL}" ]]; then
 fi
 
 echo "Downloading: ${ASSET_URL}"
-TMP_ZIP="$(mktemp -t llama-cpp.XXXXXX.zip)"
-curl -fSL -o "${TMP_ZIP}" "${ASSET_URL}"
-unzip -q -o "${TMP_ZIP}" -d "${INSTALL_DIR}"
-rm -f "${TMP_ZIP}"
+TMP_TARBALL="$(mktemp -t llama-cpp.XXXXXX.tar.gz)"
+curl -fSL -o "${TMP_TARBALL}" "${ASSET_URL}"
+tar -xzf "${TMP_TARBALL}" -C "${INSTALL_DIR}"
+rm -f "${TMP_TARBALL}"
 
-# release zip 内の build/bin/ を直下に flatten。
+# release tarball 内の build/bin/ を直下に flatten (libllama.so 等の
+# 共有ライブラリも一緒に持ち上げ、$ORIGIN ベースで解決できるように)。
 if [[ -d "${INSTALL_DIR}/build/bin" ]]; then
   mv "${INSTALL_DIR}/build/bin/"* "${INSTALL_DIR}/"
   rm -rf "${INSTALL_DIR}/build"
