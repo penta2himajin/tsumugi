@@ -27,7 +27,14 @@ if [[ ! -x "${LLAMA_BIN}" ]]; then
   exit 1
 fi
 
+# llama.cpp の Linux release tarball は libllama.so / libggml*.so を
+# 含む。binary に $ORIGIN RUNPATH が無い build があるため、防御的に
+# LD_LIBRARY_PATH に binary 同居ディレクトリを足す。
+LLAMA_BIN_DIR="$(cd "$(dirname "${LLAMA_BIN}")" && pwd)"
+export LD_LIBRARY_PATH="${LLAMA_BIN_DIR}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+
 echo "Starting llama-server: ${QWEN_REPO}:${QWEN_QUANT} on :${PORT} (ctx=${CTX_SIZE}, threads=${THREADS})"
+echo "  LD_LIBRARY_PATH=${LD_LIBRARY_PATH}"
 # mmproj を渡さないことで vision encoder ロードを回避し、純テキスト推論で動かす。
 exec "${LLAMA_BIN}" \
   -hf "${QWEN_REPO}:${QWEN_QUANT}" \
