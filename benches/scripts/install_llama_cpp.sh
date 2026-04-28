@@ -73,13 +73,30 @@ curl -fSL -o "${TMP_TARBALL}" "${ASSET_URL}"
 tar -xzf "${TMP_TARBALL}" -C "${INSTALL_DIR}"
 rm -f "${TMP_TARBALL}"
 
-# release tarball 内の build/bin/ を直下に flatten (libllama.so 等の
-# 共有ライブラリも一緒に持ち上げ、$ORIGIN ベースで解決できるように)。
-if [[ -d "${INSTALL_DIR}/build/bin" ]]; then
-  mv "${INSTALL_DIR}/build/bin/"* "${INSTALL_DIR}/"
-  rm -rf "${INSTALL_DIR}/build"
+# release tarball の internal layout は時期によって異なる:
+#   旧: ${INSTALL_DIR}/build/bin/llama-server (... と libllama.so 等)
+#   新 (b8950+): ${INSTALL_DIR}/llama-bNNNN/llama-server (...)
+# llama-server を `find` で見つけ、その親ディレクトリを INSTALL_DIR
+# 直下に flatten する。共有ライブラリも同じ親に居る前提。
+SERVER_PATH="$(find "${INSTALL_DIR}" -type f -name "llama-server" 2>/dev/null | head -n1)"
+if [[ -z "${SERVER_PATH}" ]]; then
+  echo "error: llama-server binary not found in extracted tarball"
+  echo "       extracted contents (first 30):"
+  find "${INSTALL_DIR}" -maxdepth 3 -printf '  %p\n' | head -30
+  exit 1
+fi
+SERVER_DIR="$(dirname "${SERVER_PATH}")"
+if [[ "${SERVER_DIR}" != "${INSTALL_DIR}" ]]; then
+  echo "Flattening: ${SERVER_DIR} -> ${INSTALL_DIR}"
+  # mv は dotfiles を漏らすので、shopt dotglob 込みで対応。
+  shopt -s dotglob nullglob
+  mv "${SERVER_DIR}"/* "${INSTALL_DIR}/"
+  shopt -u dotglob nullglob
+  # 空になった旧階層 (build/bin/, llama-bNNNN/ 等) を最大 2 段まで掃除
+  rmdir "${SERVER_DIR}" 2>/dev/null || true
+  rmdir "$(dirname "${SERVER_DIR}")" 2>/dev/null || true
 fi
 chmod +x "${INSTALL_DIR}/llama-server" 2>/dev/null || true
 
 echo "Installed llama.cpp into ${INSTALL_DIR}"
-ls -1 "${INSTALL_DIR}" | head -10
+ls -1 "${INSTALL_DIR}" | head -20
