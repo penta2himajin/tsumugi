@@ -9,7 +9,7 @@
 #   CTX_SIZE     : context window (default: 16384、Step 1 smoke は短文のみ)
 #   THREADS      : CPU threads (default: 4、CI runner 標準)
 #   LLAMA_BIN    : path to llama-server (default: ./llama-cpp/llama-server)
-#   QWEN_REPO    : HF repo id (default: Qwen/Qwen3.5-4B)
+#   QWEN_REPO    : HF repo id (default: unsloth/Qwen3.5-4B-GGUF)
 #   QWEN_QUANT   : llama.cpp -hf 形式の quant tag (default: Q4_K_M)
 #   HF_HUB_CACHE : HF hub cache root (default: $HOME/.cache/huggingface/hub)
 #                  download_models.sh と一致させること。
@@ -24,7 +24,7 @@ PORT="${PORT:-8080}"
 CTX_SIZE="${CTX_SIZE:-16384}"
 THREADS="${THREADS:-4}"
 LLAMA_BIN="${LLAMA_BIN:-./llama-cpp/llama-server}"
-QWEN_REPO="${QWEN_REPO:-Qwen/Qwen3.5-4B}"
+QWEN_REPO="${QWEN_REPO:-unsloth/Qwen3.5-4B-GGUF}"
 QWEN_QUANT="${QWEN_QUANT:-Q4_K_M}"
 HF_HUB_CACHE="${HF_HUB_CACHE:-${HOME}/.cache/huggingface/hub}"
 

@@ -41,14 +41,20 @@
 
 ## LLM 候補 (Phase 4-α Step 1 smoke test 後に 1 つに確定)
 
-### A. Qwen3.5-4B-Instruct
+### A. Qwen3.5-4B (text-only)
 
-- HF: `Qwen/Qwen3.5-4B-Instruct`
-- GGUF (Q4_K_M): TBD (Step 1 で revision SHA pin)
+- 公式モデル: `Qwen/Qwen3.5-4B` (safetensors 配布、Apache 2.0)
+- GGUF 配布: `unsloth/Qwen3.5-4B-GGUF` (community quantization)
+  - 取得 quant: `Qwen3.5-4B-Q4_K_M.gguf`
+  - revision SHA: TBD (Step 1 smoke 安定後に pin)
+  - License: 公式モデルから継承する Apache 2.0
 - License: **Apache 2.0** (HF model card で 2026-04-28 に確認)
 - 備考: Multimodal VL モデルだが mmproj 非ロードで text-only 動作可能。
   Hybrid Gated DeltaNet + Gated Attention + sparse MoE のため
   llama.cpp は最新 master 系の build を pin する必要あり。
+  公式 Qwen org からは GGUF 配布が無い (2026-04 時点)、`unsloth` の
+  community 配布を使用している。Qwen 公式 GGUF が後日公開された場合は
+  そちらに切り替える。
 
 ### B. Gemma 4 E4B-it
 
