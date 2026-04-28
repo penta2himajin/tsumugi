@@ -182,6 +182,54 @@
 - [ ] IkeEmbedding の `u64` bit packing 最適化 (retrieval hot path でメモリと SIMD を活用)
 - [ ] Tauri プラグイン crate の追加 (現状は下流製品側で `#[tauri::command]` を手動定義する前提)
 
+## Phase 4-α: CI ベンチマーク評価統合 — **着手中 (2026-04-28)**
+
+詳細計画は [`ci-benchmark-integration-plan.md`](./ci-benchmark-integration-plan.md)。
+ベンチマーク 43 ケース (LongMemEval_oracle 30 + MemoryAgentBench CR 8 + RULER NIAH-S 5)
+を nightly CI (新規 `bench.yml`) で回す。既存 `ci.yml` には触らない。
+
+### Step 1: Runner skeleton + 主候補 smoke test
+
+- [ ] `tsumugi-core` `onnx` feature 追加 + `OnnxEmbedding` trait 面 (実装は ort 統合と並行)
+- [ ] `benches/runner/` Cargo binary crate 作成 (workspace member、`tsumugi-core` 依存)
+- [ ] `benches/scripts/install_llama_cpp.sh` (release バイナリ pin、Qwen3.5 が動く master 系)
+- [ ] `benches/scripts/download_datasets.sh` / `download_models.sh` (HF revision pin、両 LLM 候補)
+- [ ] `benches/scripts/start_llama_server.sh` / `wait_for_health.sh` (モデル切替対応)
+- [ ] **主候補 smoke test**: Qwen3.5-4B-Instruct と Gemma 4 E4B-it を 4 vCPU runner で並列評価
+  - 起動成功率 (3 回連続)、tok/s、RULER NIAH-S 4K/16K/32K 正答率、LongMemEval_oracle 5 問の指示追従
+  - 結果を `benches/smoke-test-result.md` に記録
+  - 計画書「選択」セクションの判定ロジックで主候補確定
+- [ ] `THIRD_PARTY_LICENSES.md` 雛形 (両 LLM 候補 + e5-small + bge-small-en の attribution)
+
+### Step 2: LongMemEval_oracle 動作確認
+
+- [ ] LongMemEval HF dataset の Rust 側ローダー (`benches/runner/src/adapters/longmemeval.rs`)
+- [ ] 30 問の層化抽出ロジック (6 question type × 5 問、seed 固定)
+- [ ] 規則ベース primary metric (substring match)
+- [ ] LLM judge secondary metric (主候補 LLM、簡易 prompt)
+- [ ] ローカルでの動作確認 (CI 投入前)
+
+### Step 3: MemoryAgentBench CR + RULER NIAH-S 統合
+
+- [ ] MemoryAgentBench Conflict_Resolution 8 問 adapter
+- [ ] RULER NIAH-S 合成生成スクリプト統合 (5 seq_len)
+- [ ] Tier ablation matrix (`tier-0` / `tier-0-1` / `tier-0-1-2` / `full` の 4 構成)
+- [ ] `bench.yml` workflow 追加、`workflow_dispatch` のみで初回起動
+
+### Step 4: nightly スケジュールと regression alert
+
+- [ ] `benches/baseline.json` 初回 run の結果で生成
+- [ ] `compare_baseline.sh` (>5% 低下で警告)
+- [ ] `schedule` cron 有効化 (UTC 18:00)
+- [ ] 1 週間 nightly 観測、不安定であれば調整
+
+### Phase 4-β (後続検討、本フェーズのスコープ外)
+
+- [ ] Weekly job (`bench-extended.yml`) で NarrativeQA / MultiHop-RAG / HotpotQA / MemoryAgentBench 残り 3 split
+- [ ] Japanese 自作ベンチ (`japanese-bench.yml`) を ruri-v3-30m + Qwen3 Swallow 8B で構築
+- [ ] API judge fallback (OpenAI / Anthropic) のオプション化
+- [ ] 結果ダッシュボード (Cloudflare Pages 等) の構築
+
 ## Phase 4: 拡張 (実需次第)
 
 - [ ] chatstream との抽象共通化検討
@@ -239,4 +287,4 @@
 
 ---
 
-*最終更新: 2026-04-23*
+*最終更新: 2026-04-28*
