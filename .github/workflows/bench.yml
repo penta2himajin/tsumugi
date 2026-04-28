@@ -1,0 +1,88 @@
+name: Bench (Phase 4-α Step 1 smoke)
+
+# Phase 4-α Step 1 v0 smoke: Qwen3.5-4B-Instruct のみで起動健全性 +
+# 生成速度 + 簡易指示追従を検証する。
+#
+# - schedule (nightly) は **未設定**。Step 1 smoke が安定するまでは
+#   workflow_dispatch のみで起動する (計画書方針通り、PR では走らない)。
+# - 既存 .github/workflows/ci.yml には一切手を入れない。
+#
+# 詳細は docs/ci-benchmark-integration-plan.md。
+
+on:
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: 'Benchmark suite (Step 1 では health のみ実装)'
+        required: true
+        type: choice
+        options:
+          - health
+        default: health
+      llama_cpp_tag:
+        description: 'llama.cpp release tag (default: latest)'
+        required: false
+        type: string
+        default: latest
+      qwen_revision:
+        description: 'HF revision for Qwen3.5-4B-Instruct GGUF (default: main)'
+        required: false
+        type: string
+        default: main
+
+permissions:
+  contents: read
+
+jobs:
+  bench:
+    name: 'bench (${{ inputs.suite }})'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Cache Hugging Face hub
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface/hub
+          key: hf-bench-v1-qwen-${{ inputs.qwen_revision }}-${{ hashFiles('benches/scripts/download_models.sh') }}
+
+      - name: Install llama.cpp release
+        env:
+          LLAMA_CPP_TAG: ${{ inputs.llama_cpp_tag }}
+        run: ./benches/scripts/install_llama_cpp.sh
+
+      - name: Download models (Qwen3.5-4B-Instruct + multilingual-e5-small)
+        env:
+          QWEN_REVISION: ${{ inputs.qwen_revision }}
+        run: ./benches/scripts/download_models.sh
+
+      - name: Build runner with network feature
+        run: cargo build --release -p tsumugi-bench --features network
+
+      - name: Start llama-server
+        run: nohup ./benches/scripts/start_llama_server.sh > llama-server.log 2>&1 &
+
+      - name: Wait for llama-server health
+        run: ./benches/scripts/wait_for_health.sh http://localhost:8080/health 300
+
+      - name: Run health smoke
+        run: |
+          ./target/release/tsumugi-bench \
+            --suite health \
+            --output benches/results/${{ github.run_id }} \
+            --llm-base-url http://localhost:8080/v1 \
+            --llm-model Qwen3.5-4B-Instruct
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-health-${{ github.run_id }}
+          path: |
+            benches/results/
+            llama-server.log
+          retention-days: 30

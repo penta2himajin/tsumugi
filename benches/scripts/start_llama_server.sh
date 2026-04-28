@@ -1,40 +1,36 @@
 #!/usr/bin/env bash
-# Start llama-server in text-only mode for the smoke test or full bench run.
+# Start llama-server in text-only mode for the Phase 4-α Step 1 smoke test.
 #
-# Usage:
-#   start_llama_server.sh qwen3.5-4b   # 主候補 A
-#   start_llama_server.sh gemma4-e4b   # 主候補 B
+# 本フェーズは Qwen3.5-4B-Instruct のみを起動する。Gemma 4 E4B との
+# 2 候補並列評価は smoke が安定したら別 PR で再導入する。
 #
-# mmproj を渡さない (vision encoder 非ロード) ことで text-only 動作させる。
-# 詳細は docs/ci-benchmark-integration-plan.md §「llama.cpp サーバーモード経由」。
+# 環境変数:
+#   PORT         : llama-server bind port (default: 8080)
+#   CTX_SIZE     : context window (default: 16384、Step 1 smoke は短文のみ)
+#   THREADS      : CPU threads (default: 4、CI runner 標準)
+#   LLAMA_BIN    : path to llama-server (default: ./llama-cpp/llama-server)
+#   QWEN_REPO    : HF repo id (default: Qwen/Qwen3.5-4B-Instruct-GGUF)
+#   QWEN_QUANT   : llama.cpp -hf 形式の quant tag (default: Q4_K_M)
 
 set -euo pipefail
 
-MODEL_ID="${1:-}"
 PORT="${PORT:-8080}"
 CTX_SIZE="${CTX_SIZE:-16384}"
 THREADS="${THREADS:-4}"
 LLAMA_BIN="${LLAMA_BIN:-./llama-cpp/llama-server}"
+QWEN_REPO="${QWEN_REPO:-Qwen/Qwen3.5-4B-Instruct-GGUF}"
+QWEN_QUANT="${QWEN_QUANT:-Q4_K_M}"
 
-case "${MODEL_ID}" in
-  qwen3.5-4b)
-    HF_REPO="Qwen/Qwen3.5-4B-Instruct"
-    QUANT="Q4_K_M"
-    ;;
-  gemma4-e4b)
-    HF_REPO="unsloth/gemma-4-E4B-it-GGUF"
-    QUANT="UD-Q4_K_XL"
-    ;;
-  *)
-    echo "usage: $0 <qwen3.5-4b|gemma4-e4b>"
-    exit 2
-    ;;
-esac
+if [[ ! -x "${LLAMA_BIN}" ]]; then
+  echo "error: llama-server binary not found at ${LLAMA_BIN}"
+  echo "       run benches/scripts/install_llama_cpp.sh first"
+  exit 1
+fi
 
-echo "Starting llama-server: ${HF_REPO}:${QUANT} on :${PORT} (ctx=${CTX_SIZE}, threads=${THREADS})"
-# TODO(Step 1): bg launch + PID file 管理、log redirect。
+echo "Starting llama-server: ${QWEN_REPO}:${QWEN_QUANT} on :${PORT} (ctx=${CTX_SIZE}, threads=${THREADS})"
+# mmproj を渡さないことで vision encoder ロードを回避し、純テキスト推論で動かす。
 exec "${LLAMA_BIN}" \
-  -hf "${HF_REPO}:${QUANT}" \
+  -hf "${QWEN_REPO}:${QWEN_QUANT}" \
   --port "${PORT}" \
   --ctx-size "${CTX_SIZE}" \
   --threads "${THREADS}"

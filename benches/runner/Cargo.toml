@@ -16,6 +16,8 @@ path = "src/main.rs"
 # Default keeps the runner buildable without HTTP / ONNX wiring so that
 # `cargo build -p tsumugi-bench` succeeds in any environment. The CI bench
 # job enables both: `cargo build -p tsumugi-bench --features "network,onnx"`.
+# `--suite health` 等の LLM 経路は `network` が必須。未指定時は明示的に
+# bail させる (LmStudioEmbedding と同じパターン)。
 default = []
 network = ["tsumugi-core/network"]
 onnx = ["tsumugi-core/onnx"]
@@ -31,3 +33,4 @@ tracing.workspace = true
 
 [dev-dependencies]
 tempfile = "3"
+wiremock.workspace = true
