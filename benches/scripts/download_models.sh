@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Download LLM (Qwen3.5-4B-Instruct GGUF) + embedding (multilingual-e5-small ONNX)
+# Download LLM (Qwen3.5-4B GGUF) + embedding (multilingual-e5-small ONNX)
 # into the HF hub cache. Phase 4-α Step 1 smoke の対象モデルのみ。
 #
 # 本フェーズは Qwen のみ評価し、Gemma 4 E4B との 2 候補比較は
@@ -15,9 +15,13 @@ set -euo pipefail
 
 # revision SHA は Step 1 smoke が安定した時点で具体値に pin する。
 # それまでは "main" を使い、CI 側で workflow_dispatch input から override 可。
-QWEN_REPO="${QWEN_REPO:-Qwen/Qwen3.5-4B-Instruct-GGUF}"
+#
+# Qwen3.5-4B の HF リポジトリ位置: https://huggingface.co/Qwen/Qwen3.5-4B
+# (Qwen 公式は "-Instruct" / "-GGUF" のサフィックスを使わずベース repo に
+#  GGUF を同梱する配布形態のため、`*-GGUF` 別 repo は存在しない、2026-04 時点)
+QWEN_REPO="${QWEN_REPO:-Qwen/Qwen3.5-4B}"
 QWEN_REVISION="${QWEN_REVISION:-main}"
-QWEN_QUANT_FILE="${QWEN_QUANT_FILE:-Qwen3.5-4B-Instruct-Q4_K_M.gguf}"
+QWEN_QUANT="${QWEN_QUANT:-Q4_K_M}"
 
 E5_REPO="${E5_REPO:-intfloat/multilingual-e5-small}"
 E5_REVISION="${E5_REVISION:-main}"
@@ -32,12 +36,23 @@ if ! command -v hf >/dev/null 2>&1; then
   pip install --quiet --upgrade "huggingface-hub>=0.34"
 fi
 
-echo "Downloading LLM: ${QWEN_REPO}@${QWEN_REVISION} (file: ${QWEN_QUANT_FILE})"
-hf download \
-  "${QWEN_REPO}" \
-  "${QWEN_QUANT_FILE}" \
-  --revision "${QWEN_REVISION}" \
-  --quiet
+echo "Downloading LLM: ${QWEN_REPO}@${QWEN_REVISION} (quant: ${QWEN_QUANT})"
+# 具体的な GGUF ファイル名は repo によって命名が揺れるため、quant 名を含む
+# `.gguf` 全てを include パターンで取得する。typical 命名:
+#   Qwen3.5-4B-Q4_K_M.gguf, Qwen3.5-4B-Instruct-Q4_K_M.gguf 等。
+if ! hf download \
+    "${QWEN_REPO}" \
+    --revision "${QWEN_REVISION}" \
+    --include "*${QWEN_QUANT}*.gguf" \
+    --quiet; then
+  echo "error: failed to download GGUF for ${QWEN_REPO}@${QWEN_REVISION}"
+  echo "       available files in repo (HF tree API, first 30):"
+  curl -fsSL "https://huggingface.co/api/models/${QWEN_REPO}/tree/${QWEN_REVISION}" 2>/dev/null \
+    | jq -r '.[].path' 2>/dev/null \
+    | head -30 \
+    || echo "       (HF tree API call failed — repo may not exist or be private)"
+  exit 1
+fi
 
 echo "Downloading embedding: ${E5_REPO}@${E5_REVISION} (ONNX subdir + tokenizer/config)"
 hf download \

@@ -18,7 +18,7 @@ PORT="${PORT:-8080}"
 CTX_SIZE="${CTX_SIZE:-16384}"
 THREADS="${THREADS:-4}"
 LLAMA_BIN="${LLAMA_BIN:-./llama-cpp/llama-server}"
-QWEN_REPO="${QWEN_REPO:-Qwen/Qwen3.5-4B-Instruct-GGUF}"
+QWEN_REPO="${QWEN_REPO:-Qwen/Qwen3.5-4B}"
 QWEN_QUANT="${QWEN_QUANT:-Q4_K_M}"
 
 if [[ ! -x "${LLAMA_BIN}" ]]; then
