@@ -16,10 +16,12 @@ set -euo pipefail
 # revision SHA は Step 1 smoke が安定した時点で具体値に pin する。
 # それまでは "main" を使い、CI 側で workflow_dispatch input から override 可。
 #
-# Qwen3.5-4B の HF リポジトリ位置: https://huggingface.co/Qwen/Qwen3.5-4B
-# (Qwen 公式は "-Instruct" / "-GGUF" のサフィックスを使わずベース repo に
-#  GGUF を同梱する配布形態のため、`*-GGUF` 別 repo は存在しない、2026-04 時点)
-QWEN_REPO="${QWEN_REPO:-Qwen/Qwen3.5-4B}"
+# Qwen3.5-4B GGUF は Qwen 公式 repo (`Qwen/Qwen3.5-4B`) には含まれず
+# (safetensors 専用)、`Qwen/Qwen3.5-4B-GGUF` も HF 上に未公開のため、
+# community 製 GGUF として `unsloth/Qwen3.5-4B-GGUF` を採用する
+# (Q4_K_M, BF16, UD-Q4_K_XL 等の quant が揃っている、Apache 2.0 継承、
+#  2026-04 時点)。
+QWEN_REPO="${QWEN_REPO:-unsloth/Qwen3.5-4B-GGUF}"
 QWEN_REVISION="${QWEN_REVISION:-main}"
 QWEN_QUANT="${QWEN_QUANT:-Q4_K_M}"
 
@@ -55,10 +57,16 @@ if ! hf download \
 fi
 
 echo "Downloading embedding: ${E5_REPO}@${E5_REVISION} (ONNX subdir + tokenizer/config)"
+# `--include` を 1 度に複数 pattern 渡すと、後続の値が positional
+# `filenames` に吸われて `Ignoring --include since filenames have being
+# explicitly set.` の警告で onnx/* が無視される (huggingface_hub
+# argparse の挙動)。pattern 毎に flag を repeat する。
 hf download \
   "${E5_REPO}" \
   --revision "${E5_REVISION}" \
-  --include "onnx/*" "tokenizer.json" "config.json" \
+  --include "onnx/*" \
+  --include "tokenizer.json" \
+  --include "config.json" \
   --quiet
 
 echo "Done. Cache: ${HF_HUB_CACHE}"

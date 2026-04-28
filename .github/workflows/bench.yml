@@ -71,7 +71,27 @@ jobs:
         run: nohup ./benches/scripts/start_llama_server.sh > llama-server.log 2>&1 &
 
       - name: Wait for llama-server health
-        run: ./benches/scripts/wait_for_health.sh http://localhost:8080/health 300
+        # 4 vCPU CPU で Qwen 4B Q4_K_M のモデルロード + KV cache init は
+        # 300s で足りない可能性があるため 600s。実機 smoke の実測値で再調整。
+        run: ./benches/scripts/wait_for_health.sh http://localhost:8080/health 600
+
+      - name: Diagnose llama-server on failure
+        if: failure()
+        # health timeout / health-step 失敗時に llama-server.log と
+        # process / port 状態を workflow output に出して原因切り分けを
+        # artifact 取得なしでできるようにする。
+        run: |
+          echo "=== llama-server.log (full) ==="
+          cat llama-server.log 2>&1 || echo "(log file missing)"
+          echo
+          echo "=== llama-server / qwen processes ==="
+          ps -ef | grep -E "llama-server|qwen|gguf" | grep -v grep || echo "(no llama-server process)"
+          echo
+          echo "=== port 8080 listeners ==="
+          ss -tlnp 2>/dev/null | grep ':8080' || echo "(port 8080 not listening)"
+          echo
+          echo "=== /tmp / disk usage ==="
+          df -h /tmp / 2>/dev/null || true
 
       - name: Run health smoke
         run: |
