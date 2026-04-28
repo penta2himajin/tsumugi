@@ -1,0 +1,5 @@
+# Benchmark assets are downloaded at CI runtime. Do not commit them.
+# Rationale: docs/ci-benchmark-integration-plan.md §「ライセンス整合チェック」
+data/
+results/
+llama-cpp/

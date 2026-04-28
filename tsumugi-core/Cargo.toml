@@ -17,6 +17,10 @@ creative = []
 network = ["dep:reqwest"]
 # Enable sqlx + SQLite persistence (`SqliteStorage`).
 sqlite = ["dep:sqlx"]
+# Enable ONNX-backed embedding provider (`OnnxEmbedding`).
+# Phase 4-α Step 1 では trait 面のみ先行追加 (実 ort 統合は並行作業)。
+# 詳細は `docs/ci-benchmark-integration-plan.md` 参照。
+onnx = []
 
 [dependencies]
 anyhow.workspace = true
