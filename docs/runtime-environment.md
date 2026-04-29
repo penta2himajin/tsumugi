@@ -1,6 +1,6 @@
 # つむぎ — ランタイム環境ガイド
 
-つむぎを使う上位製品 (つかさ / つづり / つくも) の共通リファレンスとして、ハードウェア帯域別の推奨モデルと設定を整理する。製品固有の推奨は各製品の `docs/tech-architecture.md` を参照。
+つむぎを使うアプリケーションの共通リファレンスとして、ハードウェア帯域別の推奨モデルと設定を整理する。アプリケーション固有の推奨はそのアプリケーションの設計ドキュメント側で定める。
 
 詳細な調査背景は `docs/research/2026-04-model-landscape.md` を参照。
 
@@ -112,7 +112,7 @@ Gemma 3 / Gemma 4 は QAT 済み版を配布しており、事後量子化比で
 | ランタイム | 推奨ユーザー層 | 強み |
 |---|---|---|
 | **Ollama** | 一般ユーザー (デフォルト推奨) | 最も普及、Apple Silicon で MLX 自動適用 (2026-03〜) |
-| **LM Studio** | ノンコーダー / つくも層 | GUI 付き、Windows 層で人気 |
+| **LM Studio** | ノンコーダー層 (GUI ユーザー) | GUI 付き、Windows 層で人気 |
 | llama.cpp | ヘビーユーザー / 組込み | 直接統合、細かい制御 |
 | MLX (直接) | Mac 上級者 | Apple Silicon 専用、最高性能 |
 
@@ -120,7 +120,7 @@ OpenAI 互換 API を実装すれば Ollama / LM Studio のどちらでも動く
 
 ## 構造化出力の選択
 
-つくもの EventCommand 生成等、JSON 形式保証が必要な用途:
+JSON / DSL 等の形式保証が必要な用途:
 
 - **GBNF (llama.cpp)**: 最も移植性が高い、Ollama / LM Studio で動く。**第一選択**
 - **JSON Mode** (各社 API): OpenAI 互換 API ならネイティブ
@@ -138,7 +138,7 @@ OpenAI 互換 API を実装すれば Ollama / LM Studio のどちらでも動く
 ### モバイル動作
 
 - iPhone 17 Pro Max で Ternary Bonsai 8B が 27 tok/s
-- つむぎ製品群のモバイル版は MVP 対象外だが、Phase 4 以降の拡張候補
+- つむぎを利用するモバイルアプリケーションは将来の拡張候補
 - WebGPU (Bonsai 1.7B がブラウザ動作) も将来の埋め込み配布候補
 
 ### Apple M5 Neural Accelerators
@@ -146,14 +146,14 @@ OpenAI 互換 API を実装すれば Ollama / LM Studio のどちらでも動く
 - M5 (2025 末) 以降で MLX が M4 比 3.8x 高速化
 - Mac ユーザーの体験は急速に向上、Apple Silicon 特化の価値は増している
 
-## 要実機検証項目 (MVP Phase 0)
+## 要実機検証項目
 
-1. Qwen3 Swallow 8B Q5_K_M が AIのべりすと代替として文体品質で通用するか (つづり)
-2. Qwen3 Swallow 8B Q5_K_M が CoC NPC 台詞の口調一貫性を保てるか (つかさ)
-3. Qwen2.5-Coder 7B Q5_K_M が RPGツクール MZ EventCommand 生成で実用品質か (つくも)
-4. Qwen3-30B-A3B Q4 と Qwen3 Swallow 8B Q5_K_M で上位体験が有意差を生むか (全製品)
-5. MacBook Air M1/M2 16GB で Qwen3 Swallow 8B が快適に動くか (つづり主ターゲット)
-6. GBNF 制約下での Qwen2.5-Coder 7B の JSON + JavaScript 生成精度 (つくも)
+1. Qwen3 Swallow 8B Q5_K_M の日本語文体品質 (執筆系ユースケース向け)
+2. Qwen3 Swallow 8B Q5_K_M の対話 / 役割演技における口調一貫性 (TRPG / 対話系ユースケース向け)
+3. Qwen2.5-Coder 7B Q5_K_M の DSL / 構造化出力品質 (コーディング / ゲームスクリプト系ユースケース向け)
+4. Qwen3-30B-A3B Q4 と Qwen3 Swallow 8B Q5_K_M で上位体験が有意差を生むか
+5. MacBook Air M1/M2 16GB で Qwen3 Swallow 8B が快適に動くか (最低構成ライン)
+6. GBNF 制約下での Qwen2.5-Coder 7B の JSON + JavaScript 生成精度
 
 ## メタデータ
 
