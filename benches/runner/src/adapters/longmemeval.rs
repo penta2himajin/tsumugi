@@ -16,7 +16,7 @@
 
 use crate::report::SectionReport;
 use crate::suite::SuiteRunOptions;
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 use std::path::{Path, PathBuf};
 
 #[cfg(feature = "network")]
@@ -50,12 +50,31 @@ struct Entry {
     question_id: String,
     question_type: String,
     question: String,
+    /// answer は string が大半だが、数を答える `multi-session` 系等で
+    /// integer (例: `"answer": 3`) や bool が混在する。substring match の
+    /// 入力は文字列なので、ここで安全に文字列化する。
+    #[serde(deserialize_with = "deserialize_loose_string")]
     answer: String,
     #[serde(default)]
     question_date: String,
     #[serde(default)]
     haystack_dates: Vec<String>,
     haystack_sessions: Vec<Vec<Message>>,
+}
+
+fn deserialize_loose_string<'de, D>(d: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let v = serde_json::Value::deserialize(d)?;
+    Ok(match v {
+        serde_json::Value::String(s) => s,
+        serde_json::Value::Number(n) => n.to_string(),
+        serde_json::Value::Bool(b) => b.to_string(),
+        // 配列・null・object もそのまま JSON 化して保持 (実データには
+        // ほぼ出ないが、debug-friendly な fallback として)
+        other => other.to_string(),
+    })
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -265,6 +284,36 @@ mod tests {
         let sampled = stratified_sample(&entries, 5, DEFAULT_SEED);
         // 5 type × 5 + 1 type × 2 = 27
         assert_eq!(sampled.len(), 27);
+    }
+
+    #[test]
+    fn entry_parses_integer_answer() {
+        // 実 LongMemEval_oracle (line 9326 近辺) で `"answer": 3` のケースが
+        // あり、`answer: String` 固定だと serde が "invalid type: integer
+        // `3`, expected a string" で死ぬ。`deserialize_loose_string` で
+        // 数値も拾えることを保証する。
+        let json = r#"[{
+            "question_id": "0a995998",
+            "question_type": "multi-session",
+            "question": "How many items?",
+            "answer": 3,
+            "haystack_sessions": []
+        }]"#;
+        let entries: Vec<Entry> = serde_json::from_str(json).expect("parse with integer answer");
+        assert_eq!(entries[0].answer, "3");
+    }
+
+    #[test]
+    fn entry_parses_bool_answer() {
+        let json = r#"[{
+            "question_id": "x",
+            "question_type": "knowledge-update",
+            "question": "Is it true?",
+            "answer": true,
+            "haystack_sessions": []
+        }]"#;
+        let entries: Vec<Entry> = serde_json::from_str(json).expect("parse with bool answer");
+        assert_eq!(entries[0].answer, "true");
     }
 
     #[test]
