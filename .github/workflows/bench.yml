@@ -31,6 +31,11 @@ on:
         required: false
         type: string
         default: main
+      longmemeval_per_type:
+        description: 'oracle: questions per type (default 5 = 30 total; 2 = 12 total for fast smoke)'
+        required: false
+        type: string
+        default: '5'
 
 permissions:
   contents: read
@@ -39,7 +44,11 @@ jobs:
   bench:
     name: 'bench (${{ inputs.suite }})'
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # Qwen 4B Q4_K_M @ 4 vCPU で oracle 30 問は 60min を超える実測
+    # (実機 smoke #2 で 58min 経過後 cancel)。oracle / all suite で
+    # マージンを確保するため 120min。health smoke は数分で済むので
+    # 共通 120min でも実害なし。
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
 
@@ -105,6 +114,9 @@ jobs:
           # download_datasets.sh が `benches/data/longmemeval_oracle` に
           # symlink を張っている。
           LONGMEMEVAL_PATH: ${{ github.workspace }}/benches/data/longmemeval_oracle
+          # oracle のサンプル数 (per_type)。default 5 = 30 問、CI で
+          # timeout に当たりそうなら 2 = 12 問に下げる等。
+          LONGMEMEVAL_PER_TYPE: ${{ inputs.longmemeval_per_type }}
         run: |
           ./target/release/tsumugi-bench \
             --suite ${{ inputs.suite }} \
