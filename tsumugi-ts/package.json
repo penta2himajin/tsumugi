@@ -10,10 +10,6 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
-    "./creative": {
-      "types": "./dist/creative/index.d.ts",
-      "import": "./dist/creative/index.js"
-    },
     "./tauri": {
       "types": "./dist/tauri/index.d.ts",
       "import": "./dist/tauri/index.js"

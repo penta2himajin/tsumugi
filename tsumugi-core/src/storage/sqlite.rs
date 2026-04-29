@@ -14,9 +14,6 @@ use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::{Row, SqlitePool};
 use std::str::FromStr;
 
-#[cfg(feature = "creative")]
-use crate::creative::{Character, CharacterId, LoreEntry, LoreEntryId};
-
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS chunks (
     id   TEXT PRIMARY KEY,
@@ -27,14 +24,6 @@ CREATE TABLE IF NOT EXISTS facts (
     data TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS pending_items (
-    id   TEXT PRIMARY KEY,
-    data TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS characters (
-    id   TEXT PRIMARY KEY,
-    data TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS lore_entries (
     id   TEXT PRIMARY KEY,
     data TEXT NOT NULL
 );
@@ -190,54 +179,6 @@ impl StorageProvider for SqliteStorage {
         let ids = self.list_rows("pending_items").await?;
         parse_ids(ids, PendingItemId::from_uuid)
     }
-
-    #[cfg(feature = "creative")]
-    async fn save_character(&self, character: &Character) -> StorageResult<()> {
-        self.save_row("characters", &character.id.0.to_string(), character)
-            .await
-    }
-
-    #[cfg(feature = "creative")]
-    async fn load_character(&self, id: CharacterId) -> StorageResult<Character> {
-        self.load_row("characters", "character", &id.0.to_string())
-            .await
-    }
-
-    #[cfg(feature = "creative")]
-    async fn delete_character(&self, id: CharacterId) -> StorageResult<()> {
-        self.delete_row("characters", "character", &id.0.to_string())
-            .await
-    }
-
-    #[cfg(feature = "creative")]
-    async fn list_characters(&self) -> StorageResult<Vec<CharacterId>> {
-        let ids = self.list_rows("characters").await?;
-        parse_ids(ids, CharacterId::from_uuid)
-    }
-
-    #[cfg(feature = "creative")]
-    async fn save_lore(&self, entry: &LoreEntry) -> StorageResult<()> {
-        self.save_row("lore_entries", &entry.id.0.to_string(), entry)
-            .await
-    }
-
-    #[cfg(feature = "creative")]
-    async fn load_lore(&self, id: LoreEntryId) -> StorageResult<LoreEntry> {
-        self.load_row("lore_entries", "lore_entry", &id.0.to_string())
-            .await
-    }
-
-    #[cfg(feature = "creative")]
-    async fn delete_lore(&self, id: LoreEntryId) -> StorageResult<()> {
-        self.delete_row("lore_entries", "lore_entry", &id.0.to_string())
-            .await
-    }
-
-    #[cfg(feature = "creative")]
-    async fn list_lore(&self) -> StorageResult<Vec<LoreEntryId>> {
-        let ids = self.list_rows("lore_entries").await?;
-        parse_ids(ids, LoreEntryId::from_uuid)
-    }
 }
 
 fn parse_ids<T>(raw: Vec<String>, ctor: fn(uuid::Uuid) -> T) -> StorageResult<Vec<T>> {
@@ -313,26 +254,5 @@ mod tests {
         chunk.text = "v2".to_string();
         store.save_chunk(&chunk).await.unwrap();
         assert_eq!(store.load_chunk(id).await.unwrap().text, "v2");
-    }
-
-    #[tokio::test]
-    #[cfg(feature = "creative")]
-    async fn creative_crud_roundtrip() {
-        use crate::creative::{Character, LoreEntry, LoreScope};
-        let store = new_store().await;
-
-        let ch = Character::new("Alice");
-        store.save_character(&ch).await.unwrap();
-        assert_eq!(store.load_character(ch.id).await.unwrap().name, "Alice");
-        assert_eq!(store.list_characters().await.unwrap(), vec![ch.id]);
-
-        let lore = LoreEntry::new("item", "Sword", "Legendary.", LoreScope::Global);
-        store.save_lore(&lore).await.unwrap();
-        assert_eq!(store.load_lore(lore.id).await.unwrap().title, "Sword");
-
-        store.delete_character(ch.id).await.unwrap();
-        store.delete_lore(lore.id).await.unwrap();
-        assert!(store.list_characters().await.unwrap().is_empty());
-        assert!(store.list_lore().await.unwrap().is_empty());
     }
 }

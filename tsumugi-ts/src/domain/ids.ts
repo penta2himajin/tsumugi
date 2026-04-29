@@ -11,8 +11,6 @@ type Brand<T, B> = T & { readonly [TsumugiBrand]: B };
 export type ChunkId = Brand<string, 'ChunkId'>;
 export type FactId = Brand<string, 'FactId'>;
 export type PendingItemId = Brand<string, 'PendingItemId'>;
-export type CharacterId = Brand<string, 'CharacterId'>;
-export type LoreEntryId = Brand<string, 'LoreEntryId'>;
 
 const UUID_REGEX =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -40,10 +38,4 @@ export const FactId = {
 };
 export const PendingItemId = {
   from: (value: string): PendingItemId => makeId('PendingItemId', value),
-};
-export const CharacterId = {
-  from: (value: string): CharacterId => makeId('CharacterId', value),
-};
-export const LoreEntryId = {
-  from: (value: string): LoreEntryId => makeId('LoreEntryId', value),
 };

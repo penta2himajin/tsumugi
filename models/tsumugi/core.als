@@ -1,11 +1,10 @@
 module tsumugi/core
 
--- Domain-agnostic core types. No dependency on creative (novel / TRPG /
--- game-script) concepts — those live in `tsumugi/creative`.
+-- Domain-agnostic core types. No dependency on any specific application
+-- domain — downstream consumers add their own types in their own crates.
 --
--- Corresponds to `tsumugi-core/src/domain.rs` on the Rust side (default
--- features). Hand-written extensions live there; types and invariants are
--- derived from this model.
+-- Corresponds to `tsumugi-core/src/domain.rs` on the Rust side. Hand-written
+-- extensions live there; types and invariants are derived from this model.
 --
 -- Runtime-only flags (`edited_by_user`, `auto_update_locked`) are NOT
 -- modeled here — they live on the Rust struct as `bool` and guard UX

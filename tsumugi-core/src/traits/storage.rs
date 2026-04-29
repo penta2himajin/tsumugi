@@ -1,14 +1,9 @@
 //! StorageProvider: persistence abstraction for Chunks, Facts, PendingItems.
 //!
-//! Creative-only methods (`save_character`, `save_lore_entry`, …) are gated
-//! behind the `creative` feature. Implementations can attach to in-memory,
-//! SQLite, or cloud-backed stores.
+//! Implementations can attach to in-memory, SQLite, or cloud-backed stores.
 
 use crate::domain::{Chunk, ChunkId, Fact, FactId, PendingItem, PendingItemId};
 use async_trait::async_trait;
-
-#[cfg(feature = "creative")]
-use crate::creative::{Character, CharacterId, LoreEntry, LoreEntryId};
 
 pub type StorageResult<T> = Result<T, StorageError>;
 
@@ -41,24 +36,4 @@ pub trait StorageProvider: Send + Sync {
     async fn load_pending(&self, id: PendingItemId) -> StorageResult<PendingItem>;
     async fn delete_pending(&self, id: PendingItemId) -> StorageResult<()>;
     async fn list_pending(&self) -> StorageResult<Vec<PendingItemId>>;
-
-    // Character (creative feature)
-    #[cfg(feature = "creative")]
-    async fn save_character(&self, character: &Character) -> StorageResult<()>;
-    #[cfg(feature = "creative")]
-    async fn load_character(&self, id: CharacterId) -> StorageResult<Character>;
-    #[cfg(feature = "creative")]
-    async fn delete_character(&self, id: CharacterId) -> StorageResult<()>;
-    #[cfg(feature = "creative")]
-    async fn list_characters(&self) -> StorageResult<Vec<CharacterId>>;
-
-    // LoreEntry (creative feature)
-    #[cfg(feature = "creative")]
-    async fn save_lore(&self, entry: &LoreEntry) -> StorageResult<()>;
-    #[cfg(feature = "creative")]
-    async fn load_lore(&self, id: LoreEntryId) -> StorageResult<LoreEntry>;
-    #[cfg(feature = "creative")]
-    async fn delete_lore(&self, id: LoreEntryId) -> StorageResult<()>;
-    #[cfg(feature = "creative")]
-    async fn list_lore(&self) -> StorageResult<Vec<LoreEntryId>>;
 }

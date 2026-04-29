@@ -2,14 +2,12 @@
 
 ## Overview
 
-Tsumugi is a domain-agnostic context management middleware for LLM
+Tsumugi is a general-purpose memory-layer framework for LLM
 applications. The core engine treats conversations and passages as a
 hierarchy of `Chunk`s with summarisation, query classification, and
-prompt compression abstractions; creative-domain types (Character,
-Scene, LoreEntry, StylePreset) live behind the `creative` feature flag
-and are not part of the core API. Upstream consumers include Tsukasa
-(TRPG GM aid), Tsuzuri (novel writing aid), and Tsukumo (RPG Maker
-project assistant).
+prompt compression abstractions, and exposes only domain-agnostic
+primitives. Domain-specific extensions are expected to live in
+downstream consumers, not in tsumugi itself.
 
 The `docs/` directory is the source of truth for design and
 specification (`concept.md`, `tech-architecture.md`,
@@ -46,7 +44,7 @@ expected as a sibling clone (`../oxidtr`) or supplied via
 ```bash
 cargo build --workspace
 cargo test  --workspace
-cargo test  --workspace --features creative
+cargo test  --workspace --all-features
 bun run --cwd tsumugi-ts typecheck
 bun run --cwd tsumugi-ts test
 ```
@@ -71,9 +69,8 @@ before the previous one's done-criteria are met.
 ## Architectural Boundaries
 
 - **Core stays domain-agnostic.** `tsumugi-core` exposes a
-  general-purpose context API. Creative-domain types (Character,
-  Scene, LoreEntry, StylePreset) are gated behind the `creative`
-  feature and must not leak into the default-feature API surface.
+  general-purpose memory-layer API. Domain-specific types belong in
+  downstream consumers and must not be added to tsumugi itself.
 - **Full history is retained; injection is selective.** All
   conversation / passage data stays in storage. LLM inputs are
   compiled selectively from the hierarchy — never a full-history
@@ -86,8 +83,8 @@ before the previous one's done-criteria are met.
 - **Storage, embedding, and LLM provider are trait-abstracted.**
   `tsumugi-core` does not depend on a concrete vector DB, embedding
   API, or LLM client. In-memory implementations are the test default.
-- **Newtype IDs are not bypassed.** `ChunkId`, `TurnId`,
-  `CharacterId`, etc. are wrapper types; do not pass raw strings or
+- **Newtype IDs are not bypassed.** `ChunkId`, `FactId`,
+  `PendingItemId` are wrapper types; do not pass raw strings or
   integers through them.
 - **Alloy models are canonical.** `models/` drives generated Rust and
   TypeScript types via oxidtr. Do not hand-edit files under any
@@ -107,9 +104,9 @@ before the previous one's done-criteria are met.
 4. **Do not bypass the phase order.** `docs/TODO.md` defines the
    build sequence and done-criteria. Do not write later-phase code
    before the current phase is verified, even if it looks ready.
-5. **Do not leak `creative` types into the default-feature API.**
-   Anything domain-specific must compile out cleanly when the
-   `creative` feature is disabled.
+5. **Do not add domain-specific types to `tsumugi-core`.** The core
+   stays a generic memory-layer framework; product-specific
+   abstractions live in their own crates / repositories.
 6. **Do not edit oxidtr-generated files directly.** Regenerate via
    the appropriate script after editing the relevant Alloy model.
 

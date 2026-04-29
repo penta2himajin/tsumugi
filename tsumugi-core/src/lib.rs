@@ -1,10 +1,6 @@
-//! tsumugi-core — Hierarchical narrative context middleware.
+//! tsumugi-core — General-purpose memory-layer framework for LLM applications.
 //!
 //! See `docs/concept.md` and `docs/tech-architecture.md` for the design.
-//!
-//! # Features
-//!
-//! - `creative` (off by default): Character / SceneView / StylePreset / LoreEntry.
 //!
 //! # Layout
 //!
@@ -15,7 +11,6 @@
 //!   below.
 //! - `domain/` — hand-written core types (Chunk, Fact, PendingItem, Ids,
 //!   SourceLocation) and runtime fields beyond Alloy's scope.
-//! - `creative/` — hand-written creative types (feature = "creative").
 //! - `traits/` — the 9 core trait definitions.
 //! - `storage/` / `retriever/` / `scorer/` / `detector/` / `classifier/` /
 //!   `compressor/` / `summarizer/` / `compiler/` — trait implementations.
@@ -23,14 +18,13 @@
 #![forbid(unsafe_code)]
 
 // Generated types subtree — Alloy-derived relational skeleton. `pub(crate)`
-// because external users consume the hand-written `domain` / `creative`
-// re-exports instead. The alias name `tsumugi` is what the generated files
-// reference via absolute paths (`crate::tsumugi::core::Chunk`).
+// because external users consume the hand-written `domain` re-exports
+// instead. The alias name `tsumugi` is what the generated files reference
+// via absolute paths (`crate::tsumugi::core::Chunk`).
 #[allow(dead_code, unused_imports, clippy::all)]
 #[path = "gen/tsumugi"]
 pub(crate) mod tsumugi {
     pub mod core;
-    pub mod creative;
 }
 
 pub mod domain;
@@ -45,6 +39,3 @@ pub mod retriever;
 pub mod scorer;
 pub mod storage;
 pub mod summarizer;
-
-#[cfg(feature = "creative")]
-pub mod creative;
