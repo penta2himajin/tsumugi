@@ -5,7 +5,6 @@ use super::SourceLocationValue;
 use super::SummaryMethod;
 use std::collections::BTreeSet;
 
-/// Invariant: CharacterFirstAppearanceWellFormed
 /// Invariant: ParentToChildLink
 /// Invariant: ChildToParentLink
 /// Invariant: NoCyclicParent
