@@ -32,10 +32,14 @@ on:
         type: string
         default: main
       longmemeval_per_type:
-        description: 'oracle: questions per type (default 5 = 30 total; 2 = 12 total for fast smoke)'
+        description: 'oracle: questions per type (1 = 6 fast, 2 = 12, 5 = 30 full default)'
         required: false
         type: string
-        default: '5'
+        # 実機 oracle smoke #3 で 1 問あたり ~5.5min と判明。30 問は
+        # 120min timeout に間に合わない。default を 1 (6 問、~33min)
+        # に下げて反復実行を可能にし、本番品質評価をしたい時に手動で
+        # 5 を指定する運用に変更。
+        default: '1'
 
 permissions:
   contents: read
