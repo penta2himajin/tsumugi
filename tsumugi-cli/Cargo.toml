@@ -14,7 +14,6 @@ path = "src/main.rs"
 
 [features]
 default = []
-creative = ["tsumugi-core/creative"]
 
 [dependencies]
 tsumugi-core = { path = "../tsumugi-core" }

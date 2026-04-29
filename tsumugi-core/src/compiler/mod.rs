@@ -21,9 +21,6 @@ use crate::traits::{
 use chrono::Utc;
 use std::sync::Arc;
 
-#[cfg(feature = "creative")]
-use crate::creative::LoreEntry;
-
 /// Output of the compile step. Keeps the two layers separate so downstream
 /// prompt builders can stitch them in the order the product needs.
 #[derive(Debug)]
@@ -33,8 +30,6 @@ pub struct CompiledContext {
     pub resident_chunks: Vec<Chunk>,
     pub active_facts: Vec<Fact>,
     pub dynamic_chunks: Vec<ScoredChunk>,
-    #[cfg(feature = "creative")]
-    pub related_lore: Vec<LoreEntry>,
 }
 
 #[derive(Clone, Debug)]
@@ -171,8 +166,6 @@ impl ContextCompiler {
             resident_chunks,
             active_facts,
             dynamic_chunks: scored,
-            #[cfg(feature = "creative")]
-            related_lore: vec![],
         };
 
         Ok(context)

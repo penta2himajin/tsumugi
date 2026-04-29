@@ -1,7 +1,6 @@
 export interface Item {}
 
 /**
- * @invariant CharacterFirstAppearanceWellFormed
  * @invariant ParentToChildLink
  * @invariant ChildToParentLink
  * @invariant NoCyclicParent
@@ -70,55 +69,4 @@ export interface PendingItem {
 }
 
 export type Priority = "LowPriority" | "MediumPriority" | "HighPriority";
-
-/**
- * @invariant CharacterFirstAppearanceWellFormed
- */
-export interface Character {
-  readonly speech_traits: SpeechTraits | null;
-  readonly first_appearance: Chunk | null;
-}
-
-export interface SpeechTraits {
-  readonly formality: Formality;
-}
-
-export type Formality = "Casual" | "Neutral" | "Formal";
-
-/**
- * @invariant SceneViewParticipantsUnbounded
- */
-export interface SceneView {
-  readonly viewed_chunk: Chunk;
-  readonly participants: Set<Character>;
-}
-
-export interface StylePreset {
-  readonly pov: PoV;
-  readonly tense: Tense;
-  readonly formality: Formality;
-}
-
-export type PoV = "FirstPerson" | "SecondPerson" | "ThirdPerson";
-
-export type Tense = "PresentTense" | "PastTense";
-
-export interface LoreEntry {
-  readonly scope: LoreScope;
-}
-
-export interface LoreGlobal {
-  readonly kind: "LoreGlobal";
-}
-
-export interface LoreChunkLocal {
-  readonly kind: "LoreChunkLocal";
-  readonly lore_chunk: Chunk;
-}
-
-export interface LoreConditional {
-  readonly kind: "LoreConditional";
-}
-
-export type LoreScope = LoreGlobal | LoreChunkLocal | LoreConditional;
 

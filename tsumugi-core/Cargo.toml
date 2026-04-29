@@ -5,14 +5,11 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Hierarchical narrative context middleware — core library"
+description = "General-purpose memory-layer framework for LLM applications — core library"
 publish = false
 
 [features]
 default = []
-# Creative domain extension (Character / SceneView / StylePreset / LoreEntry).
-# `creative` は暫定名。将来 `story` 等への改名可能性あり (docs/concept.md 参照)。
-creative = []
 # Enable reqwest-backed OpenAI-compatible LLM and LM Studio embedding providers.
 network = ["dep:reqwest"]
 # Enable sqlx + SQLite persistence (`SqliteStorage`).

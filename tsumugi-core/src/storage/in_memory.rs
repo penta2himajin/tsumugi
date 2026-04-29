@@ -8,9 +8,6 @@ use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Mutex;
 
-#[cfg(feature = "creative")]
-use crate::creative::{Character, CharacterId, LoreEntry, LoreEntryId};
-
 #[derive(Default)]
 pub struct InMemoryStorage {
     inner: Mutex<Inner>,
@@ -21,10 +18,6 @@ struct Inner {
     chunks: HashMap<ChunkId, Chunk>,
     facts: HashMap<FactId, Fact>,
     pending: HashMap<PendingItemId, PendingItem>,
-    #[cfg(feature = "creative")]
-    characters: HashMap<CharacterId, Character>,
-    #[cfg(feature = "creative")]
-    lore: HashMap<LoreEntryId, LoreEntry>,
 }
 
 impl InMemoryStorage {
@@ -131,78 +124,6 @@ impl StorageProvider for InMemoryStorage {
     async fn list_pending(&self) -> StorageResult<Vec<PendingItemId>> {
         Ok(self.lock().pending.keys().copied().collect())
     }
-
-    #[cfg(feature = "creative")]
-    async fn save_character(&self, character: &Character) -> StorageResult<()> {
-        self.lock()
-            .characters
-            .insert(character.id, character.clone());
-        Ok(())
-    }
-
-    #[cfg(feature = "creative")]
-    async fn load_character(&self, id: CharacterId) -> StorageResult<Character> {
-        self.lock()
-            .characters
-            .get(&id)
-            .cloned()
-            .ok_or(StorageError::NotFound {
-                kind: "character",
-                id: format!("{:?}", id),
-            })
-    }
-
-    #[cfg(feature = "creative")]
-    async fn delete_character(&self, id: CharacterId) -> StorageResult<()> {
-        self.lock()
-            .characters
-            .remove(&id)
-            .map(|_| ())
-            .ok_or(StorageError::NotFound {
-                kind: "character",
-                id: format!("{:?}", id),
-            })
-    }
-
-    #[cfg(feature = "creative")]
-    async fn list_characters(&self) -> StorageResult<Vec<CharacterId>> {
-        Ok(self.lock().characters.keys().copied().collect())
-    }
-
-    #[cfg(feature = "creative")]
-    async fn save_lore(&self, entry: &LoreEntry) -> StorageResult<()> {
-        self.lock().lore.insert(entry.id, entry.clone());
-        Ok(())
-    }
-
-    #[cfg(feature = "creative")]
-    async fn load_lore(&self, id: LoreEntryId) -> StorageResult<LoreEntry> {
-        self.lock()
-            .lore
-            .get(&id)
-            .cloned()
-            .ok_or(StorageError::NotFound {
-                kind: "lore_entry",
-                id: format!("{:?}", id),
-            })
-    }
-
-    #[cfg(feature = "creative")]
-    async fn delete_lore(&self, id: LoreEntryId) -> StorageResult<()> {
-        self.lock()
-            .lore
-            .remove(&id)
-            .map(|_| ())
-            .ok_or(StorageError::NotFound {
-                kind: "lore_entry",
-                id: format!("{:?}", id),
-            })
-    }
-
-    #[cfg(feature = "creative")]
-    async fn list_lore(&self) -> StorageResult<Vec<LoreEntryId>> {
-        Ok(self.lock().lore.keys().copied().collect())
-    }
 }
 
 #[cfg(test)]
@@ -255,22 +176,5 @@ mod tests {
 
         store.delete_pending(id).await.unwrap();
         assert!(store.load_pending(id).await.is_err());
-    }
-
-    #[tokio::test]
-    #[cfg(feature = "creative")]
-    async fn creative_crud() {
-        use crate::creative::{Character, LoreEntry, LoreScope};
-        let store = InMemoryStorage::new();
-        let ch = Character::new("Alice");
-        let ch_id = ch.id;
-        store.save_character(&ch).await.unwrap();
-        let loaded = store.load_character(ch_id).await.unwrap();
-        assert_eq!(loaded.name, "Alice");
-
-        let lore = LoreEntry::new("item", "Sword", "A blade.", LoreScope::Global);
-        let lore_id = lore.id;
-        store.save_lore(&lore).await.unwrap();
-        assert_eq!(store.load_lore(lore_id).await.unwrap().title, "Sword");
     }
 }
