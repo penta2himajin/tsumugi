@@ -50,10 +50,16 @@
 - [ ] **実機 smoke 実施**: `gh workflow run bench.yml -f suite=oracle` で完走確認
 - [ ] LLM judge secondary metric (paper-exact 再現要時に別 PR)
 
-### Step 3: MemoryAgentBench CR + RULER NIAH-S 統合
+### Step 3: MemoryAgentBench CR + RULER NIAH-S 統合 — **着手中**
 
 - [ ] MemoryAgentBench Conflict_Resolution 8 問 adapter
-- [ ] RULER NIAH-S 合成生成スクリプト統合 (5 seq_len)
+  - dataset 形式: 8 行 × 60-100 QA/行、context が 273k-3.17M chars と
+    巨大なため context truncation 戦略が要る (Step 3 PR ② で対応)
+- [x] **RULER NIAH-S 合成生成 + adapter** (PR ①、2026-04-29):
+      `Suite::Smoke` に配線、合成 haystack + needle 検出、`RULER_SEQ_LENGTHS`
+      env で seq_len 群を上書き可能。CPU + 16K ctx 制約で default は
+      {2K, 4K, 8K, 12K} の 4 ケース (公式 5 ケースの {4K, 8K, 16K, 32K, 64K}
+      は GPU 環境 / 大 ctx 用)
 - [ ] Tier ablation matrix (`tier-0` / `tier-0-1` / `tier-0-1-2` / `full` の 4 構成)
 - [ ] `bench.yml` で `workflow_dispatch` から各 ablation を起動可能に
 

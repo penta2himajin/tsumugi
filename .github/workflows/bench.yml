@@ -20,6 +20,7 @@ on:
         options:
           - health
           - oracle
+          - smoke
         default: health
       llama_cpp_tag:
         description: 'llama.cpp release tag (default: latest)'
@@ -40,6 +41,11 @@ on:
         # に下げて反復実行を可能にし、本番品質評価をしたい時に手動で
         # 5 を指定する運用に変更。
         default: '1'
+      ruler_seq_lengths:
+        description: 'smoke (RULER NIAH-S): seq_lengths CSV (default 2048,4096,8192,12288 for 16K ctx)'
+        required: false
+        type: string
+        default: '2048,4096,8192,12288'
 
 permissions:
   contents: read
@@ -121,6 +127,9 @@ jobs:
           # oracle のサンプル数 (per_type)。default 5 = 30 問、CI で
           # timeout に当たりそうなら 2 = 12 問に下げる等。
           LONGMEMEVAL_PER_TYPE: ${{ inputs.longmemeval_per_type }}
+          # Step 3 の smoke (RULER NIAH-S) は seq_lengths を env で受ける。
+          # llama-server `--ctx-size 16384` に収まる範囲で指定すること。
+          RULER_SEQ_LENGTHS: ${{ inputs.ruler_seq_lengths }}
         run: |
           ./target/release/tsumugi-bench \
             --suite ${{ inputs.suite }} \
