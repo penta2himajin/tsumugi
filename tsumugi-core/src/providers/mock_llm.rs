@@ -40,6 +40,7 @@ impl LLMProvider for MockLLMProvider {
         let completion_tokens = text.split_whitespace().count() as u32 - prompt_tokens;
         Ok(CompletionResponse {
             text,
+            reasoning_text: None,
             prompt_tokens: Some(prompt_tokens),
             completion_tokens: Some(completion_tokens),
         })

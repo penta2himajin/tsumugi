@@ -110,6 +110,7 @@ mod tests {
         async fn complete(&self, _: &CompletionRequest) -> anyhow::Result<CompletionResponse> {
             Ok(CompletionResponse {
                 text: self.0.to_string(),
+                reasoning_text: None,
                 prompt_tokens: None,
                 completion_tokens: None,
             })

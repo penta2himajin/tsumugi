@@ -23,6 +23,13 @@ pub struct CompletionRequest {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CompletionResponse {
     pub text: String,
+    /// Reasoning trace separated from `text`. llama.cpp / OpenAI-compatible
+    /// servers split a model's `<think>...</think>` output into a dedicated
+    /// `reasoning_content` field for thinking-capable models (Qwen3 系等).
+    /// `text` だけ読むと thinking で max_tokens が尽きた場合に空文字列として
+    /// 観測されるため、caller 側で必要に応じて参照できるよう露出する。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_text: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prompt_tokens: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

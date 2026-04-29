@@ -66,9 +66,16 @@ async fn run_health_inner(opts: &SuiteRunOptions, trials: usize) -> anyhow::Resu
             let started = std::time::Instant::now();
             let resp = provider.complete(&request).await?;
             let latency_ms = started.elapsed().as_millis() as u64;
+            // Qwen3 thinking モデルでは answer が reasoning_content に
+            // 出る場合があるため、両方に対して substring match を取る。
+            let correct = substring_match(&resp.text, probe.expected_substring)
+                || resp
+                    .reasoning_text
+                    .as_deref()
+                    .is_some_and(|r| substring_match(r, probe.expected_substring));
             cases.push(CaseMetric {
                 case_id: format!("{}-trial-{}", probe.case_id, trial),
-                correct: substring_match(&resp.text, probe.expected_substring),
+                correct,
                 latency_ms,
                 prompt_tokens: resp.prompt_tokens,
                 completion_tokens: resp.completion_tokens,

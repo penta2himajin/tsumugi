@@ -237,6 +237,12 @@ struct ChatChoice {
 struct ChatMessage {
     #[serde(default)]
     content: Option<String>,
+    /// llama.cpp 系サーバーは Qwen3 等の thinking モデルで
+    /// `<think>...</think>` 部分を `reasoning_content` に分離して返す。
+    /// `content` が空でも `reasoning_content` に答えが残っているケースが
+    /// あるため、`CompletionResponse.reasoning_text` で露出する。
+    #[serde(default)]
+    reasoning_content: Option<String>,
 }
 
 #[cfg(feature = "network")]
@@ -251,14 +257,17 @@ struct ChatUsage {
 #[cfg(feature = "network")]
 impl ChatResponse {
     fn into_completion(self) -> CompletionResponse {
-        let text = self
-            .choices
-            .into_iter()
-            .next()
-            .and_then(|c| c.message.content)
-            .unwrap_or_default();
+        let first = self.choices.into_iter().next().map(|c| c.message);
+        let (text, reasoning_text) = match first {
+            Some(m) => (
+                m.content.unwrap_or_default(),
+                m.reasoning_content.filter(|s| !s.is_empty()),
+            ),
+            None => (String::new(), None),
+        };
         CompletionResponse {
             text,
+            reasoning_text,
             prompt_tokens: self.usage.as_ref().and_then(|u| u.prompt_tokens),
             completion_tokens: self.usage.and_then(|u| u.completion_tokens),
         }
@@ -307,8 +316,49 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.text, "pong");
+        assert_eq!(resp.reasoning_text, None);
         assert_eq!(resp.prompt_tokens, Some(3));
         assert_eq!(resp.completion_tokens, Some(1));
+    }
+
+    #[tokio::test]
+    async fn openai_compatible_extracts_reasoning_content() {
+        // llama.cpp 系の Qwen3 thinking モデルでは `<think>...</think>` 部分が
+        // `reasoning_content` に分離され、`content` が空のまま返ってくることが
+        // ある (実機 oracle smoke #4-#5 で観測)。両フィールドを正しく拾えること
+        // を保証する。
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "choices": [{
+                    "message": {
+                        "role": "assistant",
+                        "content": "",
+                        "reasoning_content": "Let me think about this step by step. The user repainted to blue."
+                    }
+                }],
+                "usage": { "prompt_tokens": 100, "completion_tokens": 64 }
+            })))
+            .mount(&server)
+            .await;
+
+        let provider = OpenAiCompatibleProvider::new(server.uri(), "qwen3.5-4b");
+        let resp = provider
+            .complete(&CompletionRequest {
+                prompt: "what color".into(),
+                max_tokens: Some(64),
+                temperature: Some(0.0),
+                grammar: None,
+                stop: None,
+            })
+            .await
+            .unwrap();
+        assert_eq!(resp.text, "");
+        assert!(resp
+            .reasoning_text
+            .as_deref()
+            .is_some_and(|t| t.contains("blue")));
     }
 
     #[tokio::test]
