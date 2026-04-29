@@ -137,7 +137,11 @@ async fn run_oracle_with_dataset(
         let prompt = build_prompt(entry);
         let request = CompletionRequest {
             prompt,
-            max_tokens: Some(64),
+            // 64 tok だと "Final answer:" 前置きで詰まって answer に
+            // 到達できないケースが多発したため (実機 oracle smoke #3
+            // で全件 max_tokens 切れ)、128 に拡大。CPU 推論なので
+            // 出力時間が直接 latency に乗る点だけ留意。
+            max_tokens: Some(128),
             temperature: Some(0.0),
             grammar: None,
             stop: None,
@@ -146,14 +150,16 @@ async fn run_oracle_with_dataset(
         let resp = provider.complete(&request).await?;
         let latency_ms = started.elapsed().as_millis() as u64;
         let correct = substring_match(&resp.text, &entry.answer);
+        let response_preview: String = resp.text.chars().take(200).collect();
         eprintln!(
-            "[oracle] [{}/{}] -> latency={}ms correct={} prompt_tokens={:?} completion_tokens={:?}",
+            "[oracle] [{}/{}] -> latency={}ms correct={} prompt_tokens={:?} completion_tokens={:?} response={:?}",
             idx + 1,
             total,
             latency_ms,
             correct,
             resp.prompt_tokens,
-            resp.completion_tokens
+            resp.completion_tokens,
+            response_preview
         );
         cases.push(CaseMetric {
             case_id: entry.question_id.clone(),
