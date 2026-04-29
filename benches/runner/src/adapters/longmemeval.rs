@@ -254,8 +254,15 @@ fn build_prompt(entry: &Entry) -> String {
     } else {
         entry.question_date.clone()
     };
+    // Qwen3 系の thinking mode を抑制する公式 directive。実機 oracle
+    // smoke #4 で全件 `content=""` / `completion_tokens=128` 飽和が
+    // 観測され、llama.cpp が thinking 出力を `reasoning_content` に
+    // 分離して `content` を空にしていたのが原因 (Qwen3 のデフォルト
+    // thinking mode + 128 tok 上限で answer に到達せず終了)。
+    // `/no_think` を user message 末尾に置くと thinking がスキップ
+    // され、直接答えが `content` に来る。
     prompt.push_str(&format!(
-        "Question (asked on {}): {}\nFinal answer:",
+        "Question (asked on {}): {}\n\n/no_think\n\nFinal answer:",
         asked_on, entry.question
     ));
     prompt
@@ -374,6 +381,20 @@ mod tests {
         assert!(p.contains("Question (asked on 2024/01/01)"));
         assert!(p.contains("Final answer:"));
         assert!(p.contains(&e.question));
+    }
+
+    #[test]
+    fn build_prompt_includes_no_think_directive_for_qwen3() {
+        // Qwen3 系 thinking mode 抑制のための `/no_think` directive が
+        // user message 末尾近くに含まれていることを保証する。
+        let entries = fixture_entries();
+        let p = build_prompt(&entries[0]);
+        assert!(p.contains("/no_think"), "prompt missing /no_think: {p}");
+        // /no_think は "Final answer:" より前にある (Qwen3 docs:
+        // 「user message 内の last instruction として置く」)
+        let nt = p.find("/no_think").unwrap();
+        let fa = p.find("Final answer:").unwrap();
+        assert!(nt < fa, "/no_think should appear before Final answer:");
     }
 }
 
