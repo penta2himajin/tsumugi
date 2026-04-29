@@ -47,21 +47,31 @@ GGUF_PATH="$(find "${HF_HUB_CACHE}/${QWEN_REPO_DIR_NAME}/snapshots" \
   -type f -name "*${QWEN_QUANT}*.gguf" 2>/dev/null \
   | head -n1 || true)"
 
+# Qwen3.5 系は thinking mode をデフォルトで有効にしており、出力の
+# `<think>...</think>` 部分が llama-server の `--reasoning-format auto`
+# (default) で `reasoning_content` フィールドに分離される。max_tokens 内
+# に answer に到達せず終了するケースを避けるため、`enable_thinking=false`
+# を chat template に渡して thinking 自体を無効化する。
+# (Qwen3.5 公式: `/no_think` directive は **サポート外**、API 側で
+#  `chat_template_kwargs` を渡すのが正規のやり方)
+COMMON_ARGS=(
+  --port "${PORT}"
+  --ctx-size "${CTX_SIZE}"
+  --threads "${THREADS}"
+  --chat-template-kwargs '{"enable_thinking":false}'
+)
+
 echo "  LD_LIBRARY_PATH=${LD_LIBRARY_PATH}"
 if [[ -n "${GGUF_PATH}" && -f "${GGUF_PATH}" ]]; then
-  echo "Starting llama-server: -m ${GGUF_PATH} on :${PORT} (ctx=${CTX_SIZE}, threads=${THREADS})"
+  echo "Starting llama-server: -m ${GGUF_PATH} on :${PORT} (ctx=${CTX_SIZE}, threads=${THREADS}, thinking=off)"
   exec "${LLAMA_BIN}" \
     -m "${GGUF_PATH}" \
-    --port "${PORT}" \
-    --ctx-size "${CTX_SIZE}" \
-    --threads "${THREADS}"
+    "${COMMON_ARGS[@]}"
 else
   echo "warning: GGUF not found in HF cache (${HF_HUB_CACHE}/${QWEN_REPO_DIR_NAME})"
   echo "         falling back to -hf (will re-download via llama.cpp's own cache)"
-  echo "Starting llama-server: -hf ${QWEN_REPO}:${QWEN_QUANT} on :${PORT} (ctx=${CTX_SIZE}, threads=${THREADS})"
+  echo "Starting llama-server: -hf ${QWEN_REPO}:${QWEN_QUANT} on :${PORT} (ctx=${CTX_SIZE}, threads=${THREADS}, thinking=off)"
   exec "${LLAMA_BIN}" \
     -hf "${QWEN_REPO}:${QWEN_QUANT}" \
-    --port "${PORT}" \
-    --ctx-size "${CTX_SIZE}" \
-    --threads "${THREADS}"
+    "${COMMON_ARGS[@]}"
 fi

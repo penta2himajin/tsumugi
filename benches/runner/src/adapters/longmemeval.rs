@@ -267,15 +267,13 @@ fn build_prompt(entry: &Entry) -> String {
     } else {
         entry.question_date.clone()
     };
-    // Qwen3 系の thinking mode を抑制する公式 directive。実機 oracle
-    // smoke #4 で全件 `content=""` / `completion_tokens=128` 飽和が
-    // 観測され、llama.cpp が thinking 出力を `reasoning_content` に
-    // 分離して `content` を空にしていたのが原因 (Qwen3 のデフォルト
-    // thinking mode + 128 tok 上限で answer に到達せず終了)。
-    // `/no_think` を user message 末尾に置くと thinking がスキップ
-    // され、直接答えが `content` に来る。
+    // Qwen3.5 は `/think` / `/nothink` の soft switch をサポートしない
+    // (Qwen3 限定の機能、Qwen3.5 model card で明示的に non-supported)
+    // ので、thinking 抑制は llama-server 側で `--chat-template-kwargs
+    // '{"enable_thinking":false}'` を渡す形で実現する
+    // (`benches/scripts/start_llama_server.sh` 参照)。
     prompt.push_str(&format!(
-        "Question (asked on {}): {}\n\n/no_think\n\nFinal answer:",
+        "Question (asked on {}): {}\nFinal answer:",
         asked_on, entry.question
     ));
     prompt
@@ -397,17 +395,18 @@ mod tests {
     }
 
     #[test]
-    fn build_prompt_includes_no_think_directive_for_qwen3() {
-        // Qwen3 系 thinking mode 抑制のための `/no_think` directive が
-        // user message 末尾近くに含まれていることを保証する。
+    fn build_prompt_does_not_include_no_think_directive() {
+        // Qwen3.5 は `/think` / `/nothink` soft switch を非サポート
+        // (Qwen3 限定の機能、Qwen3.5 公式 model card で明示)。
+        // thinking 抑制は server 側で `--chat-template-kwargs` で行う
+        // (`benches/scripts/start_llama_server.sh` 参照)。prompt 内に
+        // `/no_think` を残すと no-op な dead text になるので削除を保証。
         let entries = fixture_entries();
         let p = build_prompt(&entries[0]);
-        assert!(p.contains("/no_think"), "prompt missing /no_think: {p}");
-        // /no_think は "Final answer:" より前にある (Qwen3 docs:
-        // 「user message 内の last instruction として置く」)
-        let nt = p.find("/no_think").unwrap();
-        let fa = p.find("Final answer:").unwrap();
-        assert!(nt < fa, "/no_think should appear before Final answer:");
+        assert!(
+            !p.contains("/no_think"),
+            "prompt should not contain /no_think (Qwen3.5 ignores it): {p}"
+        );
     }
 }
 
