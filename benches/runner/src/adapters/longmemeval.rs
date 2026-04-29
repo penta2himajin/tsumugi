@@ -39,7 +39,17 @@ const QUESTION_TYPES: &[&str] = &[
     "knowledge-update",
 ];
 
-const QUESTIONS_PER_TYPE: usize = 5;
+/// `LONGMEMEVAL_PER_TYPE` env で override 可。CI で timeout 内に
+/// 収めたい場合は減らす (e.g., 2 → 12 問、1 → 6 問)。
+const DEFAULT_QUESTIONS_PER_TYPE: usize = 5;
+
+fn questions_per_type() -> usize {
+    std::env::var("LONGMEMEVAL_PER_TYPE")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .filter(|&n| n > 0)
+        .unwrap_or(DEFAULT_QUESTIONS_PER_TYPE)
+}
 
 /// stratified_sample の deterministic ソート用 seed。実機 smoke 結果を
 /// 再現可能にするため固定。
@@ -96,7 +106,8 @@ async fn run_oracle_with_dataset(
     dataset_path: &Path,
 ) -> anyhow::Result<SectionReport> {
     let entries = load_entries(dataset_path)?;
-    let sampled = stratified_sample(&entries, QUESTIONS_PER_TYPE, DEFAULT_SEED);
+    let per_type = questions_per_type();
+    let sampled = stratified_sample(&entries, per_type, DEFAULT_SEED);
     if sampled.is_empty() {
         anyhow::bail!(
             "stratified sample produced 0 entries (dataset path: {:?}, total entries: {})",
@@ -104,10 +115,25 @@ async fn run_oracle_with_dataset(
             entries.len()
         );
     }
+    eprintln!(
+        "[oracle] {} cases (per_type={}, total dataset={})",
+        sampled.len(),
+        per_type,
+        entries.len()
+    );
 
     let provider = OpenAiCompatibleProvider::new(&opts.llm_base_url, &opts.llm_model);
     let mut cases = Vec::with_capacity(sampled.len());
-    for entry in &sampled {
+    let total = sampled.len();
+    for (idx, entry) in sampled.iter().enumerate() {
+        eprintln!(
+            "[oracle] [{}/{}] type={} id={} question={:?}",
+            idx + 1,
+            total,
+            entry.question_type,
+            entry.question_id,
+            entry.question.chars().take(80).collect::<String>()
+        );
         let prompt = build_prompt(entry);
         let request = CompletionRequest {
             prompt,
@@ -119,9 +145,19 @@ async fn run_oracle_with_dataset(
         let started = std::time::Instant::now();
         let resp = provider.complete(&request).await?;
         let latency_ms = started.elapsed().as_millis() as u64;
+        let correct = substring_match(&resp.text, &entry.answer);
+        eprintln!(
+            "[oracle] [{}/{}] -> latency={}ms correct={} prompt_tokens={:?} completion_tokens={:?}",
+            idx + 1,
+            total,
+            latency_ms,
+            correct,
+            resp.prompt_tokens,
+            resp.completion_tokens
+        );
         cases.push(CaseMetric {
             case_id: entry.question_id.clone(),
-            correct: substring_match(&resp.text, &entry.answer),
+            correct,
             latency_ms,
             prompt_tokens: resp.prompt_tokens,
             completion_tokens: resp.completion_tokens,
@@ -284,6 +320,13 @@ mod tests {
         let sampled = stratified_sample(&entries, 5, DEFAULT_SEED);
         // 5 type × 5 + 1 type × 2 = 27
         assert_eq!(sampled.len(), 27);
+    }
+
+    #[test]
+    fn questions_per_type_default_is_5() {
+        // 安全のため env を unset
+        std::env::remove_var("LONGMEMEVAL_PER_TYPE");
+        assert_eq!(questions_per_type(), 5);
     }
 
     #[test]
