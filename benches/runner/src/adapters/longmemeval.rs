@@ -149,17 +149,30 @@ async fn run_oracle_with_dataset(
         let started = std::time::Instant::now();
         let resp = provider.complete(&request).await?;
         let latency_ms = started.elapsed().as_millis() as u64;
-        let correct = substring_match(&resp.text, &entry.answer);
+        // Qwen3 等の thinking モデルでは answer が `reasoning_content`
+        // (= `resp.reasoning_text`) に出る場合がある。両方に対して
+        // substring match を行い、どちらでも答えが含まれていれば correct。
+        let correct = substring_match(&resp.text, &entry.answer)
+            || resp
+                .reasoning_text
+                .as_deref()
+                .is_some_and(|r| substring_match(r, &entry.answer));
         let response_preview: String = resp.text.chars().take(200).collect();
+        let reasoning_preview: String = resp
+            .reasoning_text
+            .as_deref()
+            .map(|r| r.chars().take(200).collect())
+            .unwrap_or_default();
         eprintln!(
-            "[oracle] [{}/{}] -> latency={}ms correct={} prompt_tokens={:?} completion_tokens={:?} response={:?}",
+            "[oracle] [{}/{}] -> latency={}ms correct={} prompt_tokens={:?} completion_tokens={:?} response={:?} reasoning={:?}",
             idx + 1,
             total,
             latency_ms,
             correct,
             resp.prompt_tokens,
             resp.completion_tokens,
-            response_preview
+            response_preview,
+            reasoning_preview
         );
         cases.push(CaseMetric {
             case_id: entry.question_id.clone(),
