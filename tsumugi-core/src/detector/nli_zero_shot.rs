@@ -329,15 +329,29 @@ fn run_pair_classification(
 impl EventDetector for NliZeroShotDetector {
     type Event = DetectedEvent;
 
-    #[cfg(feature = "onnx")]
     async fn detect(
         &self,
         chunk: &Chunk,
         new_turn: &serde_json::Value,
     ) -> anyhow::Result<Vec<Self::Event>> {
+        // Empty-label short-circuit applies in both feature paths so the
+        // detector behaves consistently when there's no work to do — even
+        // a default-feature build that would otherwise bail with the
+        // "requires `onnx` feature" message returns an empty Vec here.
         if self.labels.is_empty() {
             return Ok(Vec::new());
         }
+        self.detect_inner(chunk, new_turn).await
+    }
+}
+
+#[cfg(feature = "onnx")]
+impl NliZeroShotDetector {
+    async fn detect_inner(
+        &self,
+        chunk: &Chunk,
+        new_turn: &serde_json::Value,
+    ) -> anyhow::Result<Vec<DetectedEvent>> {
         let state = self.ensure_state().await?;
         let premise = self.render_premise(chunk, new_turn);
         let max_seq = self.max_sequence_length;
@@ -370,13 +384,15 @@ impl EventDetector for NliZeroShotDetector {
         }
         Ok(events)
     }
+}
 
-    #[cfg(not(feature = "onnx"))]
-    async fn detect(
+#[cfg(not(feature = "onnx"))]
+impl NliZeroShotDetector {
+    async fn detect_inner(
         &self,
         _chunk: &Chunk,
         _new_turn: &serde_json::Value,
-    ) -> anyhow::Result<Vec<Self::Event>> {
+    ) -> anyhow::Result<Vec<DetectedEvent>> {
         anyhow::bail!(
             "NliZeroShotDetector::detect requires the `onnx` feature \
              (model_path = {:?}). Rebuild with `--features onnx` or use \
