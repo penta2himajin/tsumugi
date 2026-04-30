@@ -118,8 +118,18 @@
 
 実装順序 (各 1 PR):
 
-- [ ] `ort` 統合 + `OnnxEmbedding` 本実装 (`tier-0-1` の `MockEmbedding`
-      置換)
+- [x] **`ort` 統合 + `OnnxEmbedding` 本実装** (PR、2026-04-30):
+      `tsumugi-core` の `onnx` feature に ort 2.0.0-rc.10 + tokenizers 0.21
+      + ndarray 0.16 を追加。`OnnxEmbedding` は lazy session init
+      (`tokio::sync::OnceCell` + `spawn_blocking`)、mean pool over
+      attention mask、L2 normalize の標準パイプラインを実装。token_type_ids
+      が graph に存在する場合のみ zero-tensor を渡す多言語 BERT/XLM-R 互換。
+      benches/runner の `hybrid_retrieve` は `TSUMUGI_E5_MODEL_PATH` /
+      `TSUMUGI_E5_TOKENIZER_PATH` 両方が設定されている場合に
+      `OnnxEmbedding` (default 384-dim)、未設定時は MockEmbedding に
+      フォールバック。`resolve_e5_paths.sh` で HF cache から path を
+      抽出して `$GITHUB_ENV` に投入、`bench.yml` は `--features network,onnx`
+      でビルド
 - [ ] LLMLingua-2-mBERT 実装 (`PromptCompressor`)
 - [ ] SetFit + MiniLM 実装 (`QueryClassifier`)
 - [ ] GLiNER2 実装 (`EventDetector`)
@@ -185,4 +195,4 @@
 
 ---
 
-*最終更新: 2026-04-30*
+*最終更新: 2026-04-30 (Phase 4-γ Step 1 完了で更新)*
