@@ -57,6 +57,7 @@ one sig LlmFull          extends SummaryMethod {}
 one sig LlmLingua2       extends SummaryMethod {}
 one sig SelectiveContext extends SummaryMethod {}
 one sig ExtractiveBM25   extends SummaryMethod {}
+one sig DistilBart       extends SummaryMethod {}
 one sig UserManual       extends SummaryMethod {}
 one sig NoMethod         extends SummaryMethod {}
 
