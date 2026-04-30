@@ -154,7 +154,20 @@
       生成はダウンストリーム責務 (汎用フレームワークに domain-specific
       label を埋め込まない)。日本語クエリには `with_embedder` で
       `paraphrase-multilingual-MiniLM-L12-v2` (~118M, 384-dim) に切替可
-- [ ] GLiNER2 実装 (`EventDetector`)
+- [x] **NliZeroShot 実装** (`EventDetector`、PR、2026-04-30):
+      GLiNER2 を着手前調査で deferral と判断。理由は (a) zero-shot
+      classification ベンチで DeBERTa-MNLI が +5-6pt 上回ること、
+      (b) gliner2 Python パッケージの preprocessor が ~500 行・ONNX
+      export 経路が公開ドキュメントに無いこと、(c) typical 4-10 label
+      では DeBERTa の N-pass latency 1-1.5s が許容範囲なこと。
+      `tsumugi-core/src/detector/nli_zero_shot.rs` 新設、`NliZeroShotDetector`
+      を `OnnxEmbedding` + `LlmLingua2Compressor` と同じ ort + tokenizers
+      パターンで実装。premise/hypothesis テンプレートをユーザ設定可、
+      label 単位で entailment 確率を softmax 取得・threshold 判定で
+      `DetectedEvent` を発火。default モデルは `MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7`
+      (~278M, MIT、多言語)、英語専用なら `MoritzLaurer/DeBERTa-v3-base-mnli-fever-anli`
+      (~184M, MIT) に constructor で差し替え可。GLiNER2 は Phase 4-β /
+      5 の研究 follow-up に降格 (latency 制約が顕在化したら採用検討)
 - [ ] DistilBART 実装 (`Summarizer`)
 
 要検討事項 (本フェーズ着手前):
@@ -217,4 +230,4 @@
 
 ---
 
-*最終更新: 2026-04-30 (Phase 4-γ Step 3 完了で更新)*
+*最終更新: 2026-04-30 (Phase 4-γ Step 4 完了で更新、GLiNER2 → NLI に降格)*

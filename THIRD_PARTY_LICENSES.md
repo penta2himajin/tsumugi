@@ -98,6 +98,29 @@
   セット (MeetingBank) を再配布せず、Microsoft 発行の weights のみ HF
   経由で取得して export する。詳細は `docs/llm-free-stack-plan.md` § 8.2。
 
+### MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7 (EventDetector default)
+
+- HF: `MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7`
+- ONNX: HF Hub に Optimum 経由の ONNX 同梱は無いため、必要時に
+  `optimum-cli export onnx --task text-classification` で export
+  (`docs/llm-free-stack-plan.md` § 5.2 (4))。
+- License: **MIT**
+- 備考: ~278M params、mDeBERTa-v3-base ベースの 100+ 言語対応 NLI
+  分類器 (3-class: entailment / neutral / contradiction)。tsumugi では
+  `NliZeroShotDetector` の default モデル。XNLI 15 言語平均 ~80%
+  accuracy、MNLI 85.7% / ANLI 53.7%。日本語は XNLI test split に含まれ
+  ないため、エンコーダ事前学習 (CC-100) と多言語 NLI fine-tune からの
+  cross-lingual transfer に依存する経験的開放問題。
+
+### MoritzLaurer/DeBERTa-v3-base-mnli-fever-anli (EventDetector English-only swap)
+
+- HF: `MoritzLaurer/DeBERTa-v3-base-mnli-fever-anli`
+- License: **MIT**
+- 備考: ~184M params、DeBERTa-v3-base ベース英語専用 NLI 分類器。
+  英語ベンチマーク特化運用で `NliZeroShotDetector::new` に渡し直す
+  diff は constructor 引数のみ。MNLI ~90% / ANLI ~50%。多言語不要
+  ユースケースで latency / 精度トレードを取る場合の選択肢。
+
 ---
 
 ## ランタイム / バイナリ
