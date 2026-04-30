@@ -97,6 +97,42 @@
 
 ---
 
+## Phase 4-γ: LLM 委譲撤去アーキテクチャ — **計画策定 (2026-04-30)**
+
+詳細計画は [`llm-free-stack-plan.md`](./llm-free-stack-plan.md)。
+`LLMProvider` 経由で LLM に委譲している 4 コンポーネント
+(`LlmSummarizer` / `LlmLinguaCompressor` / `BertClassifier` /
+`LLMClassifierDetector`) を encoder-only モデルベースの実装に置換し、
+全パスを LLM 委譲なしで動作させる。Phase 4-α Step 3 で観測された
+「retrieval recall (87.5%) ≫ LLM answer match (12.5%)」の構造的差を
+受け、LLM-free 経路を堅牢化する。
+
+採用アーキテクチャ:
+
+| trait | 採用モデル | パラメータ | 既存 LLM 委譲版 |
+|---|---|---|---|
+| `Summarizer` | DistilBART-CNN-6-6 | 230M | `LlmSummarizer` (並列維持) |
+| `PromptCompressor` | LLMLingua-2-mBERT-base | 110M | `LlmLinguaCompressor` (並列維持、要リネーム) |
+| `QueryClassifier` | SetFit + MiniLM-L6-v2 | 22M | `BertClassifier` (並列維持) |
+| `EventDetector` | GLiNER2 | ~200M | `LLMClassifierDetector` (並列維持) |
+
+実装順序 (各 1 PR):
+
+- [ ] `ort` 統合 + `OnnxEmbedding` 本実装 (`tier-0-1` の `MockEmbedding`
+      置換)
+- [ ] LLMLingua-2-mBERT 実装 (`PromptCompressor`)
+- [ ] SetFit + MiniLM 実装 (`QueryClassifier`)
+- [ ] GLiNER2 実装 (`EventDetector`)
+- [ ] DistilBART 実装 (`Summarizer`)
+
+要検討事項 (本フェーズ着手前にライセンス確認):
+
+- [ ] 採用モデル 4 つのライセンス確認 (`THIRD_PARTY_LICENSES.md` 更新)
+- [ ] GLiNER2 の HF Hub 公開状況 + ONNX export 実機検証
+- [ ] 多言語性能 (特に日本語) のリスク評価
+
+---
+
 ## Phase 4: 拡張 (実需次第)
 
 - [ ] 追加機能の feature flag 設計 (実需発生時のみ起動)
