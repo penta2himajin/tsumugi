@@ -6,6 +6,10 @@ name: Bench (Phase 4-α)
 #   Step 3 PR ① (smoke): RULER NIAH-S 4 ケース (合成、Tier 0 baseline)
 #   Step 3 PR ② (cr): MemoryAgentBench Conflict_Resolution 8 ケース
 #                       (BM25 retrieval で context 圧縮、supersession 検証)
+#   Step 3 PR ③ (ablations): Tier ablation matrix (tier-0 / tier-0-1 /
+#                       tier-0-1-2 / full の 4 構成、smoke / oracle / cr に
+#                       横断適用)。LLM 不使用 ablation は retrieval recall、
+#                       full は LLM answer match で判定
 #
 # - schedule (nightly) は **未設定**。Step 1 smoke が安定するまでは
 #   workflow_dispatch のみで起動する (計画書方針通り、PR では走らない)。
@@ -51,6 +55,11 @@ on:
         required: false
         type: string
         default: '2048,4096,8192,12288'
+      ablations:
+        description: 'Tier ablation set CSV (tier-0|tier-0-1|tier-0-1-2|full)。空 = 4 構成すべて'
+        required: false
+        type: string
+        default: 'tier-0,tier-0-1,tier-0-1-2,full'
 
 permissions:
   contents: read
@@ -61,9 +70,11 @@ jobs:
     runs-on: ubuntu-latest
     # Qwen 4B Q4_K_M @ 4 vCPU で oracle 30 問は 60min を超える実測
     # (実機 smoke #2 で 58min 経過後 cancel)。oracle / all suite で
-    # マージンを確保するため 120min。health smoke は数分で済むので
-    # 共通 120min でも実害なし。
-    timeout-minutes: 120
+    # マージンを確保するため 150min。tier-0 / tier-0-1 / tier-0-1-2 は
+    # LLM 不使用 (BM25 / cosine / TruncateCompressor のみ) で per case
+    # <1s だが、4 ablation × N case の累積と HybridRetriever の MockEmbedding
+    # pre-compute で総時間の上振れリスクがある。health smoke は数分で済む。
+    timeout-minutes: 150
     steps:
       - uses: actions/checkout@v4
 
@@ -141,9 +152,14 @@ jobs:
           # adapter は MAB_CR_PATH を読む。download_datasets.sh が
           # parquet → JSONL 変換した結果がここに置かれる。
           MAB_CR_PATH: ${{ github.workspace }}/benches/data/memoryagentbench_cr.jsonl
+          # Step 3 PR ③ の Tier ablation matrix。CLI `--ablations` が優先、
+          # 空指定 (空文字列) なら BENCH_ABLATIONS env もスキップして
+          # adapter 内 default_set (4 ablation) にフォールバックする。
+          BENCH_ABLATIONS: ${{ inputs.ablations }}
         run: |
           ./target/release/tsumugi-bench \
             --suite ${{ inputs.suite }} \
+            --ablations "${{ inputs.ablations }}" \
             --output benches/results/${{ github.run_id }} \
             --llm-base-url http://localhost:8080/v1 \
             --llm-model Qwen3.5-4B-Instruct

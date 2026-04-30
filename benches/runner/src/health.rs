@@ -76,13 +76,13 @@ async fn run_health_inner(opts: &SuiteRunOptions, trials: usize) -> anyhow::Resu
                     .reasoning_text
                     .as_deref()
                     .is_some_and(|r| substring_match(r, probe.expected_substring));
-            writer.write_case(CaseMetric {
-                case_id: format!("{}-trial-{}", probe.case_id, trial),
+            writer.write_case(CaseMetric::for_full(
+                format!("{}-trial-{}", probe.case_id, trial),
                 correct,
                 latency_ms,
-                prompt_tokens: resp.prompt_tokens,
-                completion_tokens: resp.completion_tokens,
-            })?;
+                resp.prompt_tokens,
+                resp.completion_tokens,
+            ))?;
         }
     }
     Ok(writer.finish())
@@ -114,6 +114,7 @@ mod tests {
             output_dir,
             llm_base_url: server_uri,
             llm_model: "qwen3.5-4b-instruct".into(),
+            ablations: crate::suite::Ablation::default_set(),
             help: false,
         }
     }
@@ -217,6 +218,7 @@ mod stub_tests {
             output_dir: PathBuf::from("/tmp/ignored"),
             llm_base_url: "http://unreachable".into(),
             llm_model: "qwen3.5-4b-instruct".into(),
+            ablations: crate::suite::Ablation::default_set(),
             help: false,
         };
         let err = run_health_inner(&opts, 1).await.unwrap_err();
