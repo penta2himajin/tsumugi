@@ -1,8 +1,11 @@
-name: Bench (Phase 4-α Step 1-2)
+name: Bench (Phase 4-α)
 
 # Phase 4-α:
 #   Step 1 v0 smoke (health): LLM 起動健全性 + 生成速度 + 簡易指示追従
 #   Step 2 (oracle): LongMemEval_oracle 30 問 (層化抽出、規則ベース primary)
+#   Step 3 PR ① (smoke): RULER NIAH-S 4 ケース (合成、Tier 0 baseline)
+#   Step 3 PR ② (cr): MemoryAgentBench Conflict_Resolution 8 ケース
+#                       (BM25 retrieval で context 圧縮、supersession 検証)
 #
 # - schedule (nightly) は **未設定**。Step 1 smoke が安定するまでは
 #   workflow_dispatch のみで起動する (計画書方針通り、PR では走らない)。
@@ -21,6 +24,8 @@ on:
           - health
           - oracle
           - smoke
+          - cr
+          - all
         default: health
       llama_cpp_tag:
         description: 'llama.cpp release tag (default: latest)'
@@ -85,8 +90,10 @@ jobs:
           QWEN_REVISION: ${{ inputs.qwen_revision }}
         run: ./benches/scripts/download_models.sh
 
-      - name: Download datasets (LongMemEval oracle)
-        if: inputs.suite == 'oracle'
+      - name: Download datasets (LongMemEval oracle + MemoryAgentBench CR)
+        if: inputs.suite == 'oracle' || inputs.suite == 'cr' || inputs.suite == 'all'
+        # script 1 本で両 dataset を取る。LongMemEval ~15 MB + CR ~1.5 MB
+        # で download cost は無視可能、suite 別の条件分岐は workflow 側で行う。
         run: ./benches/scripts/download_datasets.sh
 
       - name: Build runner with network feature
@@ -130,6 +137,10 @@ jobs:
           # Step 3 の smoke (RULER NIAH-S) は seq_lengths を env で受ける。
           # llama-server `--ctx-size 16384` に収まる範囲で指定すること。
           RULER_SEQ_LENGTHS: ${{ inputs.ruler_seq_lengths }}
+          # Step 3 PR ② の cr (MemoryAgentBench Conflict_Resolution)。
+          # adapter は MAB_CR_PATH を読む。download_datasets.sh が
+          # parquet → JSONL 変換した結果がここに置かれる。
+          MAB_CR_PATH: ${{ github.workspace }}/benches/data/memoryagentbench_cr.jsonl
         run: |
           ./target/release/tsumugi-bench \
             --suite ${{ inputs.suite }} \

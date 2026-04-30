@@ -52,6 +52,13 @@ pub fn substring_match(answer: &str, expected: &str) -> bool {
     answer.to_lowercase().contains(&expected.to_lowercase())
 }
 
+/// 候補のいずれか 1 つ以上に部分一致すれば true。MemoryAgentBench
+/// `Conflict_Resolution` の `answers[i]: List[String]` (同義語候補) に
+/// 対応する。空配列に対しては常に false。
+pub fn substring_match_any(answer: &str, candidates: &[String]) -> bool {
+    candidates.iter().any(|c| substring_match(answer, c))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -91,5 +98,34 @@ mod tests {
     fn substring_match_is_case_insensitive() {
         assert!(substring_match("The Final Answer is FOO", "foo"));
         assert!(!substring_match("nope", "foo"));
+    }
+
+    #[test]
+    fn substring_match_any_returns_true_when_any_candidate_matches() {
+        let cands = vec![
+            "Chief of Protocol".to_string(),
+            "Protocol Officer".to_string(),
+        ];
+        assert!(substring_match_any(
+            "Final answer: Chief of Protocol of the United States",
+            &cands
+        ));
+        // 2nd 候補のみマッチ
+        assert!(substring_match_any(
+            "He served as a Protocol Officer until 1975.",
+            &cands
+        ));
+    }
+
+    #[test]
+    fn substring_match_any_returns_false_when_no_candidate_matches() {
+        let cands = vec!["Chief of Protocol".to_string()];
+        assert!(!substring_match_any("Some other answer entirely", &cands));
+    }
+
+    #[test]
+    fn substring_match_any_returns_false_for_empty_candidates() {
+        // 候補が空 = 期待値なし → 常に false (false negative にしない)
+        assert!(!substring_match_any("anything", &[]));
     }
 }

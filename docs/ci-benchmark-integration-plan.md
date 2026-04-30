@@ -50,7 +50,7 @@ GitHub Actions の **公開リポジトリ向け標準ランナー** (x64 ubuntu
 | ベンチマーク | サブセット | ケース数 | カバー軸 | 主用途 | License |
 |---|---|---|---|---|---|
 | **LongMemEval** | `longmemeval_oracle` を 30 問に絞り | 30 | IE, MR, KU, TR, ABS | 5 カテゴリ網羅、業界標準 | MIT |
-| **MemoryAgentBench** | `Conflict_Resolution` 全 8 問 | 8 | **CR (supersession 直接検証)** | Mayu 差別化軸 | MIT |
+| **MemoryAgentBench** | `Conflict_Resolution` 8 行 × `questions[0]` = 8 ケース | 8 | **CR (supersession 直接検証)** | Mayu 差別化軸 | MIT |
 | **RULER** | `niah_single_2` を seq_len ∈ {4K, 8K, 16K, 32K, 64K} で各 1 ケース | 5 | retrieval baseline | Tier 0 (BM25) baseline | Apache 2.0 |
 
 合計 **43 ケース**。フルセット (LongMemEval 500 + MemoryAgentBench 146 + RULER 13 task) と比べて約 6%、CI で許容できる規模。
@@ -264,10 +264,24 @@ benches/
 ### メトリクス
 
 - LongMemEval: 公式 metric (LLM-as-Judge with GPT-4o → CI では judge LLM を Qwen3-4B にダウンサイズ + 規則ベース併用)
-- MemoryAgentBench: 公式 exact match / fuzzy match
+- MemoryAgentBench: 公式 exact match / fuzzy match。CR は `answers[i]: List[String]` の同義語候補リストを持つので、`metrics::substring_match_any` (any-match) で判定する
 - RULER: 公式 string match (NIAH 系は完全一致)
 
 LLM-as-Judge は判定モデルの差で揺れるため、**規則ベース primary + LLM judge secondary** とし、不一致時は両方記録する。後で paper-exact 再現が必要になったら API judge に差し替える。
+
+### MemoryAgentBench CR の context truncation (Step 3 PR ② 実装決定、2026-04-30)
+
+CR の各 row の `context` は 273k-3.17M chars (約 70K-800K tokens) と llama-server `--ctx-size 16384` を大きく超えるため、adapter 側で context 圧縮が必要。実装決定:
+
+- **戦略**: `tsumugi_core::retriever::Bm25Retriever` で chunk_size 1024 tok (≒ 4096 chars) / top_k 10 の retrieval を実施し ~10K tok 程度に圧縮
+- **フォールバック**: BM25 hit が `top_k/2` 未満の場合、context 末尾 ~10K tokens を採用 (CR の supersession 仮説と整合: 新しい事実は document 末尾近辺に集中する傾向)
+- **chars↔tokens 換算**: 保守的に 4 chars/token を仮定 (英語 ASCII で 3.5-4.5 chars/tok の安全側)
+- **Tier 0 ablation との関係**: adapter 内の BM25 は **prompt budget 制約から来る前処理**であり、Tier 0 (LLM 不使用 baseline) ablation とは別概念。Tier 0 は Step 3 PR ③ (Tier ablation matrix) で別出力ファイルとして追加する
+- **「全 8 問」の解釈**: CR split は 8 行 × 60-100 QA/行という構造。本フェーズでは **8 行 × `questions[0]` = 8 ケース**を評価対象とする (最初の代表 QA を deterministic に採用)。`CR_QUESTIONS_PER_ROW` env で 1..N に拡張可能
+
+### parquet 取扱い
+
+`download_datasets.sh` は LongMemEval (JSON) は raw 取得、MemoryAgentBench (parquet) は `pyarrow` 経由で JSONL 変換した結果を `benches/data/memoryagentbench_cr.jsonl` に置く。Rust adapter は両者とも JSONL/JSON 経路で読む (`serde_json`)。
 
 ---
 
@@ -430,12 +444,12 @@ CPU 推論前提の概算 (4 vCPU、Qwen3-4B Q4_K_M、~7 tok/s)。
 - [ ] LLM judge secondary metric (Qwen3-4B 使用、簡易 prompt)
 - [ ] ローカルでの動作確認 (CI 投入前)
 
-#### Step 3: MemoryAgentBench CR + RULER NIAH-S 統合 (1 週間)
+#### Step 3: MemoryAgentBench CR + RULER NIAH-S 統合
 
-- [ ] MemoryAgentBench Conflict_Resolution 8 問の adapter
-- [ ] RULER NIAH-S の合成生成スクリプト統合 (5 seq_len)
-- [ ] Tier ablation matrix の実装 (4 構成)
-- [ ] `bench.yml` workflow を追加し、`workflow_dispatch` のみで初回起動
+- [x] **RULER NIAH-S 合成生成スクリプト統合** (PR ①、2026-04-29、`Suite::Smoke`、CPU smoke 用に default 4 ケース {2K/4K/8K/12K})
+- [x] **MemoryAgentBench Conflict_Resolution adapter** (PR ②、2026-04-30、`Suite::Cr`、8 行 × `questions[0]`、Bm25Retriever で context 圧縮、`substring_match_any` で同義語マッチ)
+- [ ] Tier ablation matrix の実装 (4 構成、PR ③ 予定)
+- [x] `bench.yml` workflow を追加し、`workflow_dispatch` のみで初回起動 (本 PR で `cr` / `all` suite も配線済み)
 
 #### Step 4: nightly スケジュールと regression alert (1 週間)
 

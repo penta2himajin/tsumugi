@@ -52,9 +52,14 @@
 
 ### Step 3: MemoryAgentBench CR + RULER NIAH-S 統合 — **着手中**
 
-- [ ] MemoryAgentBench Conflict_Resolution 8 問 adapter
-  - dataset 形式: 8 行 × 60-100 QA/行、context が 273k-3.17M chars と
-    巨大なため context truncation 戦略が要る (Step 3 PR ② で対応)
+- [x] **MemoryAgentBench Conflict_Resolution adapter** (PR ②、2026-04-30):
+      `Suite::Cr` に配線、8 行 × `questions[0]` = 8 ケースを評価。各 row
+      の context (273k-3.17M chars) は `Bm25Retriever` (chunk_size 1024 tok
+      / top_k 10) で ~10K tok に圧縮、BM25 hit が top_k/2 未満になった
+      場合は context 末尾 ~10K tok でフォールバック。`answers[i]: List[String]`
+      の同義語候補は新設 `substring_match_any` でマッチ。`download_datasets.sh`
+      で parquet → JSONL 変換 (pyarrow)。`CR_QUESTIONS_PER_ROW` / `CR_TOP_K`
+      / `CR_CHUNK_CHARS` env で挙動 override 可
 - [x] **RULER NIAH-S 合成生成 + adapter** (PR ①、2026-04-29):
       `Suite::Smoke` に配線、合成 haystack + needle 検出、`RULER_SEQ_LENGTHS`
       env で seq_len 群を上書き可能。CPU + 16K ctx 制約で default は
