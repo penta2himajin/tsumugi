@@ -1,0 +1,64 @@
+{"text": "What is the population of Tokyo?", "label": "Literal"}
+{"text": "How tall is Mount Everest?", "label": "Literal"}
+{"text": "Who wrote 'Pride and Prejudice'?", "label": "Literal"}
+{"text": "When was the Eiffel Tower built?", "label": "Literal"}
+{"text": "What is the capital of Brazil?", "label": "Literal"}
+{"text": "Define photosynthesis.", "label": "Literal"}
+{"text": "How many bytes are in a kilobyte?", "label": "Literal"}
+{"text": "What language is spoken in Argentina?", "label": "Literal"}
+{"text": "List the planets of the solar system.", "label": "Literal"}
+{"text": "What is the boiling point of water in Celsius?", "label": "Literal"}
+{"text": "Who is the current CEO of Microsoft?", "label": "Literal"}
+{"text": "What year did World War II end?", "label": "Literal"}
+{"text": "How long is the Great Wall of China?", "label": "Literal"}
+{"text": "What does HTTP stand for?", "label": "Literal"}
+{"text": "Show me the recipe for sourdough bread.", "label": "Literal"}
+{"text": "What is the speed of light?", "label": "Literal"}
+{"text": "Continue the story from where Alice met Bob.", "label": "Narrative"}
+{"text": "What did the protagonist do next?", "label": "Narrative"}
+{"text": "Tell me what happens after the prince enters the castle.", "label": "Narrative"}
+{"text": "Pick up the conversation between the detective and the suspect.", "label": "Narrative"}
+{"text": "Continue describing the festival from the previous chapter.", "label": "Narrative"}
+{"text": "What was the hero feeling when she opened the letter?", "label": "Narrative"}
+{"text": "Carry on the dialogue between the captain and the crew.", "label": "Narrative"}
+{"text": "Describe the next scene after they reached the village.", "label": "Narrative"}
+{"text": "Pick up the action from the cliffhanger.", "label": "Narrative"}
+{"text": "What did the witness say after the lawyer's question?", "label": "Narrative"}
+{"text": "Continue the tale of the lost expedition.", "label": "Narrative"}
+{"text": "What did the assistant reply to the user's earlier message?", "label": "Narrative"}
+{"text": "Resume narrating the journey through the mountains.", "label": "Narrative"}
+{"text": "What was the queen's response to the messenger?", "label": "Narrative"}
+{"text": "Pick up where the previous session ended.", "label": "Narrative"}
+{"text": "Continue the back-and-forth between the rivals.", "label": "Narrative"}
+{"text": "Why did the war start in 1939?", "label": "Analytical"}
+{"text": "Compare the impact of two economic policies on inflation.", "label": "Analytical"}
+{"text": "Explain the trade-offs between rust and go for systems programming.", "label": "Analytical"}
+{"text": "Analyze the reasons for the company's decline last decade.", "label": "Analytical"}
+{"text": "What are the implications of remote work for urban planning?", "label": "Analytical"}
+{"text": "Discuss the strengths and weaknesses of the proposal.", "label": "Analytical"}
+{"text": "Evaluate the long-term effects of the new tax reform.", "label": "Analytical"}
+{"text": "How does machine learning differ from traditional statistics?", "label": "Analytical"}
+{"text": "Why did this approach succeed where the previous one failed?", "label": "Analytical"}
+{"text": "Assess the validity of this argument from chapter three.", "label": "Analytical"}
+{"text": "What patterns emerge across these case studies?", "label": "Analytical"}
+{"text": "Reason about the consequences if the assumption were false.", "label": "Analytical"}
+{"text": "Synthesize the conclusions from these three reports.", "label": "Analytical"}
+{"text": "Critique the methodology used in the experiment.", "label": "Analytical"}
+{"text": "Map the causal chain from the policy to the observed outcome.", "label": "Analytical"}
+{"text": "Identify what's structurally different between the two systems.", "label": "Analytical"}
+{"text": "asdfg jklm qwerty", "label": "Unknown"}
+{"text": "????", "label": "Unknown"}
+{"text": "...", "label": "Unknown"}
+{"text": "lorem ipsum dolor sit amet", "label": "Unknown"}
+{"text": "test test test", "label": "Unknown"}
+{"text": "hello", "label": "Unknown"}
+{"text": "ok", "label": "Unknown"}
+{"text": "hmm", "label": "Unknown"}
+{"text": "yes", "label": "Unknown"}
+{"text": "no", "label": "Unknown"}
+{"text": "what", "label": "Unknown"}
+{"text": "I don't know", "label": "Unknown"}
+{"text": "never mind", "label": "Unknown"}
+{"text": "go on", "label": "Unknown"}
+{"text": "skip", "label": "Unknown"}
+{"text": "anything", "label": "Unknown"}
