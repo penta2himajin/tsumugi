@@ -8,8 +8,14 @@
 //! tokenizer.json compatible with `tokenizers::Tokenizer::from_file`.
 //!
 //! Compression flow:
-//! 1. Tokenize the prompt with the model's tokenizer (special tokens added).
-//! 2. Forward through the ONNX session to obtain per-token logits.
+//! 1. Tokenize the prompt with the model's tokenizer. Truncation is
+//!    disabled at load time so prompts longer than `max_position_embeddings`
+//!    pass through to the chunked inference step intact.
+//! 2. Sliding-window forward: split the content (non-special) tokens into
+//!    chunks of `max_seq - 2` and prepend [CLS] / append [SEP] to each.
+//!    Run the ONNX session once per chunk, holding the session lock across
+//!    the whole loop, and write the per-position keep probability back to
+//!    the original sequence's coordinates.
 //! 3. Softmax over the class axis → keep probability per subword token.
 //! 4. Convert the user's whitespace-token budget into a subword budget by
 //!    measuring how many whitespace tokens the original input has and
@@ -181,8 +187,16 @@ impl LlmLingua2Compressor {
 fn load_state(model_path: &PathBuf, tokenizer_path: &PathBuf) -> anyhow::Result<InferenceState> {
     use anyhow::Context;
 
-    let tokenizer = tokenizers::Tokenizer::from_file(tokenizer_path)
+    let mut tokenizer = tokenizers::Tokenizer::from_file(tokenizer_path)
         .map_err(|e| anyhow::anyhow!("failed to load tokenizer from {tokenizer_path:?}: {e}"))?;
+    // tokenizer.json may embed `truncation: { max_length: 512 }`. We slide
+    // windows ourselves to handle prompts longer than the model's
+    // `max_position_embeddings`, so disabling that policy here is required:
+    // otherwise `encode` silently drops everything past the first 512 tokens
+    // and the compressor only ever "sees" the head of a long input.
+    tokenizer
+        .with_truncation(None)
+        .map_err(|e| anyhow::anyhow!("failed to disable tokenizer truncation: {e}"))?;
     let session = ort::session::Session::builder()
         .context("failed to create ort SessionBuilder")?
         .commit_from_file(model_path)
@@ -207,121 +221,36 @@ fn run_compression(
     preserve_tail_words: usize,
     original_word_count: usize,
 ) -> anyhow::Result<String> {
-    use ndarray::Array2;
-    use ort::value::Value;
-
-    // Tokenize once with special tokens. We keep [CLS] at position 0 and
-    // [SEP] at position seq-1 so that the model's training distribution
-    // matches exactly. Keep probabilities for those positions are dropped
-    // before token selection.
+    // Tokenize once. With truncation disabled at load time, this returns
+    // the full sequence ([CLS] + content subwords + [SEP], possibly tens
+    // of thousands of tokens for benchmark inputs). The chunked inference
+    // step below splits this into ≤ `max_seq` windows so prompts longer
+    // than the model's `max_position_embeddings` are handled correctly.
     let encoding = state
         .tokenizer
         .encode(prompt, true)
         .map_err(|e| anyhow::anyhow!("tokenizer encode failed: {e}"))?;
-    let mut ids: Vec<i64> = encoding.get_ids().iter().map(|&x| x as i64).collect();
-    let mut mask: Vec<i64> = encoding
-        .get_attention_mask()
-        .iter()
-        .map(|&x| x as i64)
-        .collect();
+    let ids: Vec<i64> = encoding.get_ids().iter().map(|&x| x as i64).collect();
     let special_mask: Vec<bool> = encoding
         .get_special_tokens_mask()
         .iter()
         .map(|&x| x != 0)
         .collect();
-    if ids.len() > max_seq {
-        ids.truncate(max_seq);
-        mask.truncate(max_seq);
-    }
     let seq_len = ids.len();
     if seq_len == 0 {
         return Ok(prompt.to_string());
     }
-    let special_mask = if special_mask.len() >= seq_len {
-        special_mask[..seq_len].to_vec()
-    } else {
-        let mut v = vec![false; seq_len];
-        for (i, &b) in special_mask.iter().enumerate().take(seq_len) {
-            v[i] = b;
-        }
-        v
-    };
-
-    let input_ids = Value::from_array(Array2::<i64>::from_shape_vec((1, seq_len), ids.clone())?)?;
-    let attention_mask =
-        Value::from_array(Array2::<i64>::from_shape_vec((1, seq_len), mask.clone())?)?;
-
-    // Run inference inside a tight scope so the session lock + outputs
-    // borrow drop before we start ranking. We copy logits into a local
-    // Vec<f32> immediately to release the ort buffers.
-    let (logits, num_classes) = {
-        let mut session = state
-            .session
-            .lock()
-            .map_err(|e| anyhow::anyhow!("ort session mutex poisoned: {e}"))?;
-        let outputs = if state.needs_token_type_ids {
-            let token_type_ids = Value::from_array(Array2::<i64>::zeros((1, seq_len)))?;
-            session.run(ort::inputs![
-                "input_ids" => input_ids,
-                "attention_mask" => attention_mask,
-                "token_type_ids" => token_type_ids,
-            ])?
-        } else {
-            session.run(ort::inputs![
-                "input_ids" => input_ids,
-                "attention_mask" => attention_mask,
-            ])?
-        };
-        let (_name, first_output) = outputs
-            .iter()
-            .next()
-            .ok_or_else(|| anyhow::anyhow!("ONNX session returned no outputs"))?;
-        let (shape, data) = first_output
-            .try_extract_tensor::<f32>()
-            .map_err(|e| anyhow::anyhow!("failed to extract f32 tensor from output: {e}"))?;
-        let dims = shape.as_ref();
-        if dims.len() != 3 {
-            anyhow::bail!(
-                "expected rank-3 output [1, seq, classes], got shape {:?}",
-                dims
-            );
-        }
-        if dims[0] != 1 || dims[1] as usize != seq_len {
-            anyhow::bail!(
-                "unexpected output shape {:?}: expected [1, {}, classes]",
-                dims,
-                seq_len
-            );
-        }
-        let num_classes = dims[2] as usize;
-        if keep_class_index >= num_classes {
-            anyhow::bail!(
-                "keep_class_index {} out of range for num_classes {}",
-                keep_class_index,
-                num_classes
-            );
-        }
-        (data.to_vec(), num_classes)
-    };
-
-    // Per-token softmax over the class axis to produce keep probabilities.
-    let mut keep_probs = vec![0f32; seq_len];
-    for (t, kp) in keep_probs.iter_mut().enumerate().take(seq_len) {
-        let base = t * num_classes;
-        let mut max_logit = f32::NEG_INFINITY;
-        for c in 0..num_classes {
-            let v = logits[base + c];
-            if v > max_logit {
-                max_logit = v;
-            }
-        }
-        let mut sum = 0f32;
-        for c in 0..num_classes {
-            sum += (logits[base + c] - max_logit).exp();
-        }
-        let keep_logit = logits[base + keep_class_index];
-        *kp = ((keep_logit - max_logit).exp()) / sum;
+    if special_mask.len() != seq_len {
+        anyhow::bail!(
+            "tokenizer returned mismatched lengths (ids={}, special_mask={})",
+            seq_len,
+            special_mask.len()
+        );
     }
+
+    let (keep_probs, num_classes) =
+        run_chunked_inference(state, &ids, &special_mask, max_seq, keep_class_index)?;
+    let _ = num_classes;
 
     // The user budget is in whitespace tokens, but we select subwords.
     // Translate via the input's word count so that the subword keep
@@ -334,9 +263,10 @@ fn run_compression(
         target_kept_subwords.max(((non_special_count as f32) * min_keep_ratio).ceil() as usize);
 
     // Identify the suffix subwords that map to `preserve_tail_words` whitespace
-    // tokens at the end of the original prompt. Because the tokenizer
-    // discarded whitespace, we approximate by walking back from the last
-    // non-special token until we have collected enough word boundaries.
+    // tokens at the end of the original prompt. Walks back from the last
+    // non-special token, treating WordPiece `##` continuation pieces as part
+    // of the current word (BERT convention) and any other piece as a fresh
+    // word boundary.
     let force_keep_set = if preserve_tail_words == 0 {
         std::collections::HashSet::new()
     } else {
@@ -374,6 +304,180 @@ fn run_compression(
         .decode(&kept_token_ids, true)
         .map_err(|e| anyhow::anyhow!("tokenizer decode failed: {e}"))?;
     Ok(decoded)
+}
+
+/// Sliding-window inference over a sequence longer than `max_seq` subwords.
+///
+/// BERT-base style models are bounded by `max_position_embeddings` (typically
+/// 512), so any prompt longer than that has to be split. We carve the input's
+/// content tokens (everything except the [CLS]/[SEP] inserted by the
+/// tokenizer's post-processor) into non-overlapping windows of size
+/// `max_seq - 2`, prepend a fresh [CLS] and append a fresh [SEP] to each
+/// window, run the forward pass, and write the per-token keep probability
+/// back to the original sequence's coordinates. Special-token positions
+/// keep their default 0.0 keep_prob and are excluded from selection upstream.
+///
+/// Returns `(keep_probs_for_full_sequence, num_classes)`. `keep_probs` has
+/// the same length as `ids`.
+#[cfg(feature = "onnx")]
+fn run_chunked_inference(
+    state: &InferenceState,
+    ids: &[i64],
+    special_mask: &[bool],
+    max_seq: usize,
+    keep_class_index: usize,
+) -> anyhow::Result<(Vec<f32>, usize)> {
+    use ndarray::Array2;
+    use ort::value::Value;
+
+    let seq_len = ids.len();
+    let mut keep_probs = vec![0f32; seq_len];
+
+    // Identify [CLS] / [SEP] from the original encoding. Most BERT/mBERT
+    // tokenizers put a single [CLS] at the start and a single [SEP] at the
+    // end. We detect them generically via `special_mask` so the code works
+    // for any tokenizer that follows the standard pattern.
+    let cls_id = ids
+        .iter()
+        .zip(special_mask.iter())
+        .find(|(_, &is_special)| is_special)
+        .map(|(&id, _)| id);
+    let sep_id = ids
+        .iter()
+        .zip(special_mask.iter())
+        .rev()
+        .find(|(_, &is_special)| is_special)
+        .map(|(&id, _)| id);
+
+    // List of full-sequence positions that hold actual content (non-special).
+    // Each chunk's logits map back to a slice of this list.
+    let content_positions: Vec<usize> = (0..seq_len).filter(|&i| !special_mask[i]).collect();
+    let content_len = content_positions.len();
+    if content_len == 0 {
+        return Ok((keep_probs, 2));
+    }
+
+    let chunk_content_size = max_seq.saturating_sub(2).max(1);
+
+    // We may run multiple `Session::run` calls; hold the lock once across
+    // the whole loop to amortise mutex acquisition over O(N/chunk_size)
+    // forward passes.
+    let mut session = state
+        .session
+        .lock()
+        .map_err(|e| anyhow::anyhow!("ort session mutex poisoned: {e}"))?;
+    let mut num_classes_observed: Option<usize> = None;
+
+    let mut start = 0usize;
+    while start < content_len {
+        let end = (start + chunk_content_size).min(content_len);
+        let mut chunk_ids: Vec<i64> = Vec::with_capacity(chunk_content_size + 2);
+        if let Some(c) = cls_id {
+            chunk_ids.push(c);
+        }
+        for &p in &content_positions[start..end] {
+            chunk_ids.push(ids[p]);
+        }
+        if let Some(s) = sep_id {
+            chunk_ids.push(s);
+        }
+        let cls_offset = if cls_id.is_some() { 1 } else { 0 };
+        let chunk_seq_len = chunk_ids.len();
+        let chunk_mask: Vec<i64> = vec![1i64; chunk_seq_len];
+
+        let input_ids = Value::from_array(Array2::<i64>::from_shape_vec(
+            (1, chunk_seq_len),
+            chunk_ids,
+        )?)?;
+        let attention_mask = Value::from_array(Array2::<i64>::from_shape_vec(
+            (1, chunk_seq_len),
+            chunk_mask,
+        )?)?;
+
+        let (logits, num_classes) = {
+            let outputs = if state.needs_token_type_ids {
+                let token_type_ids = Value::from_array(Array2::<i64>::zeros((1, chunk_seq_len)))?;
+                session.run(ort::inputs![
+                    "input_ids" => input_ids,
+                    "attention_mask" => attention_mask,
+                    "token_type_ids" => token_type_ids,
+                ])?
+            } else {
+                session.run(ort::inputs![
+                    "input_ids" => input_ids,
+                    "attention_mask" => attention_mask,
+                ])?
+            };
+            let (_name, first_output) = outputs
+                .iter()
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("ONNX session returned no outputs"))?;
+            let (shape, data) = first_output
+                .try_extract_tensor::<f32>()
+                .map_err(|e| anyhow::anyhow!("failed to extract f32 tensor from output: {e}"))?;
+            let dims = shape.as_ref();
+            if dims.len() != 3 {
+                anyhow::bail!(
+                    "expected rank-3 output [1, seq, classes], got shape {:?}",
+                    dims
+                );
+            }
+            if dims[0] != 1 || dims[1] as usize != chunk_seq_len {
+                anyhow::bail!(
+                    "unexpected output shape {:?}: expected [1, {}, classes]",
+                    dims,
+                    chunk_seq_len
+                );
+            }
+            let num_classes = dims[2] as usize;
+            if keep_class_index >= num_classes {
+                anyhow::bail!(
+                    "keep_class_index {} out of range for num_classes {}",
+                    keep_class_index,
+                    num_classes
+                );
+            }
+            (data.to_vec(), num_classes)
+        };
+
+        if let Some(prev) = num_classes_observed {
+            if prev != num_classes {
+                anyhow::bail!(
+                    "ONNX graph emitted inconsistent num_classes across chunks: {} vs {}",
+                    prev,
+                    num_classes
+                );
+            }
+        }
+        num_classes_observed = Some(num_classes);
+
+        // Softmax over class axis → keep_prob for each chunk position.
+        // Then map back to full-sequence coordinates.
+        for (i, &content_pos) in content_positions[start..end].iter().enumerate() {
+            let chunk_pos = i + cls_offset;
+            let base = chunk_pos * num_classes;
+            let mut max_logit = f32::NEG_INFINITY;
+            for c in 0..num_classes {
+                let v = logits[base + c];
+                if v > max_logit {
+                    max_logit = v;
+                }
+            }
+            let mut sum = 0f32;
+            for c in 0..num_classes {
+                sum += (logits[base + c] - max_logit).exp();
+            }
+            let keep_logit = logits[base + keep_class_index];
+            keep_probs[content_pos] = ((keep_logit - max_logit).exp()) / sum;
+        }
+
+        if end >= content_len {
+            break;
+        }
+        start = end;
+    }
+
+    Ok((keep_probs, num_classes_observed.unwrap_or(2)))
 }
 
 /// Walk back from the end of the non-special token range until we cover
@@ -482,6 +586,10 @@ mod tests {
     /// 実重みがある場合の compression smoke。`TSUMUGI_LLMLINGUA2_MODEL_PATH`
     /// と `TSUMUGI_LLMLINGUA2_TOKENIZER_PATH` の両方が設定されている
     /// ときだけ走る。default の cargo test では skip。
+    ///
+    /// Prompt は >512 subwords にして sliding-window chunking 経路を
+    /// 必ず exercise する。これがないと 512 truncation バグが
+    /// 再発しても気付けない (cr ベンチ初回 dispatch でその罠を踏んだ)。
     #[cfg(feature = "onnx")]
     #[tokio::test]
     async fn compress_real_weights_shrinks_prompt() {
@@ -501,14 +609,17 @@ mod tests {
         };
 
         let c = LlmLingua2Compressor::new(model_path, tokenizer_path);
-        let prompt = "The quick brown fox jumps over the lazy dog. \
-            Meanwhile, the rain in Spain falls mainly on the plain. \
-            Apollo 11 landed on the Moon on July 20, 1969 at 20:17 UTC. \
-            What was the date of the Moon landing?";
+        // ~1100 words filler + suffix question が 512 subwords (BERT 限界) を
+        // 超え、複数 chunk forward が走ることを保証する。
+        let filler =
+            "The technical report describes the methodology in considerable detail. ".repeat(100);
+        let question = " The Apollo 11 mission landed on the Moon on July 20, 1969 at 20:17 UTC. \
+              What was the exact date of the Moon landing?";
+        let prompt = format!("{filler}{question}");
         let original_words = prompt.split_whitespace().count();
-        let target_budget = (original_words / 2) as u32;
+        let target_budget = (original_words / 4) as u32; // 4x 圧縮
         let out = c
-            .compress(prompt, CompressionHint::new(target_budget, 4))
+            .compress(&prompt, CompressionHint::new(target_budget, 16))
             .await
             .unwrap();
         let out_words = out.split_whitespace().count();
