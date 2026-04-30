@@ -20,7 +20,9 @@ use serde::{Deserialize, Deserializer};
 use std::path::{Path, PathBuf};
 
 #[cfg(feature = "network")]
-use crate::adapters::common::{bm25_retrieve, concat_for_judge, hybrid_retrieve, truncate_compress};
+use crate::adapters::common::{
+    bm25_retrieve, concat_for_judge, hybrid_retrieve, truncate_compress,
+};
 #[cfg(feature = "network")]
 use crate::metrics::{substring_match, CaseMetric};
 #[cfg(feature = "network")]

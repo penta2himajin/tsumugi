@@ -346,8 +346,7 @@ async fn run_niah_s_retrieval_only(
         ablation,
         Ablation::Tier0 | Ablation::Tier01 | Ablation::Tier012
     ));
-    let mut writer =
-        IncrementalSectionWriter::create(&opts.output_dir, "ruler-niah-s", ablation)?;
+    let mut writer = IncrementalSectionWriter::create(&opts.output_dir, "ruler-niah-s", ablation)?;
     let budget = compress_budget_from_env();
     let total = cases.len();
     for (idx, case) in cases.iter().enumerate() {
@@ -363,8 +362,8 @@ async fn run_niah_s_retrieval_only(
         let concat = concat_for_judge(&retrieved);
         let retrieval_chars = concat.chars().count();
         let (judge_text, compressed_chars) = if matches!(ablation, Ablation::Tier012) {
-            let compressed = truncate_compress(&concat, budget, RULER_COMPRESS_PRESERVE_TAIL)
-                .await?;
+            let compressed =
+                truncate_compress(&concat, budget, RULER_COMPRESS_PRESERVE_TAIL).await?;
             let len = compressed.chars().count();
             (compressed, Some(len))
         } else {

@@ -179,13 +179,7 @@ mod tests {
             IncrementalSectionWriter::create(dir.path(), "longmemeval-oracle", Ablation::Full)
                 .expect("create");
         writer
-            .write_case(CaseMetric::for_full(
-                "q1",
-                true,
-                100,
-                Some(10),
-                Some(20),
-            ))
+            .write_case(CaseMetric::for_full("q1", true, 100, Some(10), Some(20)))
             .expect("write q1");
         // q1 だけの状態で別プロセスから読めることを確認
         let intermediate =
@@ -197,13 +191,7 @@ mod tests {
         assert!(!intermediate.contains("q2"));
 
         writer
-            .write_case(CaseMetric::for_full(
-                "q2",
-                false,
-                200,
-                Some(30),
-                Some(40),
-            ))
+            .write_case(CaseMetric::for_full("q2", false, 200, Some(30), Some(40)))
             .expect("write q2");
         let after_q2 =
             std::fs::read_to_string(dir.path().join("longmemeval-oracle/full.jsonl")).unwrap();

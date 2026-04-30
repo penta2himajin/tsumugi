@@ -278,8 +278,8 @@ async fn run_cr_retrieval_only(
         let concat = concat_for_judge(&retrieved);
         let retrieval_chars = concat.chars().count();
         let (judge_text, compressed_chars) = if matches!(ablation, Ablation::Tier012) {
-            let compressed = truncate_compress(&concat, budget, DEFAULT_COMPRESS_PRESERVE_TAIL)
-                .await?;
+            let compressed =
+                truncate_compress(&concat, budget, DEFAULT_COMPRESS_PRESERVE_TAIL).await?;
             let compressed_len = compressed.chars().count();
             (compressed, Some(compressed_len))
         } else {
@@ -744,10 +744,7 @@ mod network_tests {
             // 圧縮後 chars ≤ 圧縮前 chars
             let before = c.retrieval_chars.unwrap();
             let after = c.compressed_chars.unwrap();
-            assert!(
-                after <= before,
-                "compressed {after} > original {before}"
-            );
+            assert!(after <= before, "compressed {after} > original {before}");
         }
         let received = server.received_requests().await.unwrap_or_default();
         assert!(received.is_empty(), "tier-0-1-2 must not call LLM");

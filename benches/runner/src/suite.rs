@@ -285,10 +285,7 @@ mod tests {
     fn ablation_parses_known_values() {
         assert_eq!("tier-0".parse::<Ablation>().unwrap(), Ablation::Tier0);
         assert_eq!("tier-0-1".parse::<Ablation>().unwrap(), Ablation::Tier01);
-        assert_eq!(
-            "tier-0-1-2".parse::<Ablation>().unwrap(),
-            Ablation::Tier012
-        );
+        assert_eq!("tier-0-1-2".parse::<Ablation>().unwrap(), Ablation::Tier012);
         assert_eq!("full".parse::<Ablation>().unwrap(), Ablation::Full);
         // 余分な whitespace は trim される
         assert_eq!("  full  ".parse::<Ablation>().unwrap(), Ablation::Full);
