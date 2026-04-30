@@ -150,10 +150,20 @@
       実装。head は JSON 形式 (`labels` / `embedding_dim` / `weights` /
       `bias`) でロード、argmax → label string → `QueryClass` 変換。
       ラベルは case-insensitive で `{Literal, Narrative, Analytical,
-      Unknown}` にマッチ、未知は `with_default` で指定可能。訓練データ
-      生成はダウンストリーム責務 (汎用フレームワークに domain-specific
-      label を埋め込まない)。日本語クエリには `with_embedder` で
-      `paraphrase-multilingual-MiniLM-L12-v2` (~118M, 384-dim) に切替可
+      Unknown}` にマッチ、未知は `with_default` で指定可能。日本語
+      クエリには `with_embedder` で `paraphrase-multilingual-MiniLM-L12-v2`
+      (~118M, 384-dim) に切替可
+- [x] **SetFit デフォルト head 同梱** (PR-2、2026-04-30):
+      LLM 削除と並行で、SetFitClassifier が out-of-the-box で動作する
+      ように 4 ラベル × 16 例で fine-tune した artifact を repo に同梱。
+      `models/setfit-training/queries.jsonl` (英語 64 例) +
+      `scripts/train_setfit.py` (setfit 1.1.0 + transformers 4.45.2 の
+      固定 pin、CPU 1-2 min で完走) で再現可能。出力は `models/setfit/`
+      配下に `all-MiniLM-L6-v2-default.{onnx,tokenizer.json,head.json}`、
+      ONNX は git LFS 配下 (`.gitattributes` で `models/**/*.onnx` を
+      track)。`SetFitClassifier::from_dir_and_stem("models/setfit",
+      "all-MiniLM-L6-v2-default")` で一発ロード。held-out 6 例で
+      accuracy 5/6 (83%)、SetFit paper 想定範囲内
 - [x] **NliZeroShot 実装** (`EventDetector`、PR、2026-04-30):
       GLiNER2 を着手前調査で deferral と判断。理由は (a) zero-shot
       classification ベンチで DeBERTa-MNLI が +5-6pt 上回ること、
@@ -244,4 +254,4 @@
 
 ---
 
-*最終更新: 2026-04-30 (Phase 4-γ Step 5 完了で更新)*
+*最終更新: 2026-04-30 (LLM 削除 + SetFit デフォルト head 同梱で更新)*

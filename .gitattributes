@@ -1,0 +1,13 @@
+# Git LFS pointers — large model artifacts shipped with the repo.
+#
+# tsumugi ships a small set of trained encoder-only model weights so the
+# library is usable out-of-the-box without a downstream training step.
+# Each artifact is on the order of 20-30 MB; together they're under
+# 100 MB total, well within LFS comfort range.
+#
+# Track everything under `models/` that's binary-shaped so future
+# additions (DistilBART, GLiNER, etc.) don't need a .gitattributes
+# update each time.
+models/**/*.onnx       filter=lfs diff=lfs merge=lfs -text
+models/**/*.bin        filter=lfs diff=lfs merge=lfs -text
+models/**/*.safetensors filter=lfs diff=lfs merge=lfs -text

@@ -193,6 +193,28 @@ impl SetFitClassifier {
         }
     }
 
+    /// Convenience constructor for the canonical filename layout that
+    /// `scripts/train_setfit.py` produces. Given a directory and a stem
+    /// (e.g. `"all-MiniLM-L6-v2-default"`), expects:
+    ///
+    /// - `{dir}/{stem}.onnx`             — encoder weights (raw last_hidden_state)
+    /// - `{dir}/{stem}.tokenizer.json`   — sentence-transformers tokenizer
+    /// - `{dir}/{stem}.head.json`        — `LinearHeadFile`
+    ///
+    /// The repo ships one trained head under `models/setfit/` with stem
+    /// `all-MiniLM-L6-v2-default` (English, 4 labels: Literal / Narrative /
+    /// Analytical / Unknown). Re-train against your own examples by editing
+    /// `models/setfit-training/queries.jsonl` and running
+    /// `python3 scripts/train_setfit.py`.
+    pub fn from_dir_and_stem(dir: impl AsRef<std::path::Path>, stem: &str) -> Self {
+        let dir = dir.as_ref();
+        Self::new(
+            dir.join(format!("{stem}.onnx")),
+            dir.join(format!("{stem}.tokenizer.json")),
+            dir.join(format!("{stem}.head.json")),
+        )
+    }
+
     /// Replace the default 384-dim MiniLM embedder. Use this to swap in
     /// `paraphrase-multilingual-MiniLM-L12-v2` for Japanese / multilingual
     /// queries, or any other sentence-transformers encoder whose output
@@ -350,6 +372,23 @@ mod tests {
             .with_default(QueryClass::Analytical);
         assert_eq!(c.label_to_class("Custom"), QueryClass::Analytical);
         assert_eq!(c.label_to_class(""), QueryClass::Analytical);
+    }
+
+    #[test]
+    fn from_dir_and_stem_uses_canonical_filenames() {
+        let c = SetFitClassifier::from_dir_and_stem("/models/setfit", "all-MiniLM-L6-v2-default");
+        assert_eq!(
+            c.embedder.model_path,
+            PathBuf::from("/models/setfit/all-MiniLM-L6-v2-default.onnx")
+        );
+        assert_eq!(
+            c.embedder.tokenizer_path,
+            PathBuf::from("/models/setfit/all-MiniLM-L6-v2-default.tokenizer.json")
+        );
+        assert_eq!(
+            c.head_path,
+            PathBuf::from("/models/setfit/all-MiniLM-L6-v2-default.head.json")
+        );
     }
 
     #[cfg(not(feature = "onnx"))]
