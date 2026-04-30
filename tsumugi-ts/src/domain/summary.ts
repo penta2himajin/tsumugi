@@ -3,7 +3,6 @@
 // names map 1:1).
 
 export type SummaryMethod =
-  | 'LlmFull'
   | 'LlmLingua2'
   | 'SelectiveContext'
   | 'ExtractiveBM25'

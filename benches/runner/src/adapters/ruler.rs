@@ -1,54 +1,37 @@
 //! RULER NIAH-S (Single needle in a haystack) adapter.
 //!
 //! 計画書 §「ベンチマークサブセットの選定」: `niah_single_2` を seq_len ∈
-//! {4K, 8K, 16K, 32K, 64K} で各 1 ケース、計 5 ケース。Tier 0 (BM25) baseline
-//! の確認用。
+//! {4K, 8K, 16K, 32K, 64K} で各 1 ケース、計 5 ケース。Tier 0 (BM25)
+//! baseline の確認用。LLM 削除後は retrieval recall (substring match on
+//! retrieved chunks) のみで判定する。
 //!
 //! 本実装は **CPU smoke 環境向け**の合成生成版:
 //! - 公式 RULER は Paul Graham essays を haystack に使う (paper-exact)
 //!   が、本 adapter は deterministic な lorem-ipsum 系合成で代替する
-//! - 公式 5 サイズ (4K/8K/16K/32K/64K) は CPU + 4B model + 16K llama-server
-//!   ctx_size に収まらないため、デフォルトを {2K, 4K, 8K, 12K} の 4 ケースに
-//!   絞る。GPU 環境で大きな ctx_size が使える場合は env `RULER_SEQ_LENGTHS`
-//!   で `4096,8192,16384` 等に切替可能 (ただし llama-server の `--ctx-size`
-//!   も合わせて引き上げること)
+//! - 公式 5 サイズ (4K/8K/16K/32K/64K) は CPU + 16K 程度の context 上限に
+//!   収まらないため、デフォルトを {2K, 4K, 8K, 12K} の 4 ケースに絞る。
+//!   `RULER_SEQ_LENGTHS=4096,8192,16384` 等で env 上書き可能
 //!
-//! 評価方法: needle に埋め込んだ value を期待値とし、応答に含まれていれば
-//! correct (substring match)。Tier 0 baseline として、LLM 不使用の
-//! `Bm25Retriever` でも同 needle 検出をテストする ablation は Step 3 後半
-//! (Tier ablation matrix) で対応する。
+//! 評価方法: needle に埋め込んだ value が retrieved (or compressed)
+//! chunk に substring として残っているかを判定する。
 
-use crate::report::SectionReport;
-use crate::suite::{Ablation, SuiteRunOptions};
-
-#[cfg(feature = "network")]
 use crate::adapters::common::{
     bm25_retrieve, chunk_text, concat_for_judge, hybrid_retrieve, tier_0_1_2_compress,
 };
-#[cfg(feature = "network")]
 use crate::metrics::{substring_match, CaseMetric};
-#[cfg(feature = "network")]
-use crate::report::IncrementalSectionWriter;
-#[cfg(feature = "network")]
-use tsumugi_core::providers::OpenAiCompatibleProvider;
-#[cfg(feature = "network")]
-use tsumugi_core::traits::llm::{CompletionRequest, LLMProvider};
+use crate::report::{IncrementalSectionWriter, SectionReport};
+use crate::suite::{Ablation, SuiteRunOptions};
 
 /// 1 chunk あたりのターゲット文字数。RULER haystack を BM25 / Hybrid に
 /// 流すときの粒度。
-#[cfg(feature = "network")]
 const RULER_CHUNK_CHARS: usize = 2048;
 /// retrieval top_k。
-#[cfg(feature = "network")]
 const RULER_TOP_K: usize = 10;
-/// tier-0-1-2 truncate budget (whitespace tokens)。`RULER_COMPRESS_BUDGET_TOKENS`
-/// で override 可。
-#[cfg(feature = "network")]
+/// tier-0-1-2 compress budget (whitespace tokens)。
+/// `RULER_COMPRESS_BUDGET_TOKENS` で override 可。
 const RULER_COMPRESS_BUDGET_TOKENS: u32 = 2048;
-#[cfg(feature = "network")]
 const RULER_COMPRESS_PRESERVE_TAIL: u32 = 256;
 
-#[cfg(feature = "network")]
 fn compress_budget_from_env() -> u32 {
     std::env::var("RULER_COMPRESS_BUDGET_TOKENS")
         .ok()
@@ -57,7 +40,7 @@ fn compress_budget_from_env() -> u32 {
         .unwrap_or(RULER_COMPRESS_BUDGET_TOKENS)
 }
 
-/// CPU + 4B model + 16K llama-server ctx 向けの保守的サイズ。
+/// CPU + 16K ctx 向けの保守的サイズ。
 /// `RULER_SEQ_LENGTHS=2048,4096,8192,12288` の形で env 上書き可能。
 const DEFAULT_SEQ_LENGTHS: &[usize] = &[2048, 4096, 8192, 12288];
 
@@ -222,34 +205,6 @@ fn build_cases(seed: u64, seq_lengths: &[usize]) -> Vec<NiahCase> {
         .collect()
 }
 
-fn build_prompt(case: &NiahCase) -> String {
-    format!(
-        "Read the following document carefully. \
-         Some special key-value pairs are hidden inside the text.\n\n\
-         === DOCUMENT START ===\n{}\n=== DOCUMENT END ===\n\n\
-         Question: What is the special value associated with the key '{}' in the document?\n\
-         Answer with only the value (no explanation).\n\
-         Final answer:",
-        case.haystack, case.needle_key
-    )
-}
-
-pub async fn run_niah_s(opts: &SuiteRunOptions) -> anyhow::Result<SectionReport> {
-    run_niah_s_with_ablation(opts, Ablation::Full).await
-}
-
-#[cfg(not(feature = "network"))]
-pub async fn run_niah_s_with_ablation(
-    _opts: &SuiteRunOptions,
-    _ablation: Ablation,
-) -> anyhow::Result<SectionReport> {
-    anyhow::bail!(
-        "Suite::Smoke requires the `network` feature for the OpenAI-compatible \
-         LLM provider. Rebuild `tsumugi-bench` with `--features network`."
-    )
-}
-
-#[cfg(feature = "network")]
 pub async fn run_niah_s_with_ablation(
     opts: &SuiteRunOptions,
     ablation: Ablation,
@@ -262,90 +217,16 @@ pub async fn run_niah_s_with_ablation(
         cases.len(),
         seq_lengths
     );
-    match ablation {
-        Ablation::Full => run_niah_s_full(opts, &cases).await,
-        Ablation::Tier0 | Ablation::Tier01 | Ablation::Tier012 => {
-            run_niah_s_retrieval_only(opts, &cases, ablation).await
-        }
-    }
+    run_niah_s_retrieval_only(opts, &cases, ablation).await
 }
 
-#[cfg(feature = "network")]
-async fn run_niah_s_full(
-    opts: &SuiteRunOptions,
-    cases: &[NiahCase],
-) -> anyhow::Result<SectionReport> {
-    let provider = OpenAiCompatibleProvider::new(&opts.llm_base_url, &opts.llm_model);
-    let mut writer =
-        IncrementalSectionWriter::create(&opts.output_dir, "ruler-niah-s", Ablation::Full)?;
-    let total = cases.len();
-    for (idx, case) in cases.iter().enumerate() {
-        eprintln!(
-            "[smoke/full] [{}/{}] case={} seq_len={} haystack_chars={} needle_key={} needle_value={}",
-            idx + 1,
-            total,
-            case.case_id,
-            case.seq_len,
-            case.haystack.len(),
-            case.needle_key,
-            case.needle_value
-        );
-        let prompt = build_prompt(case);
-        let request = CompletionRequest {
-            prompt,
-            max_tokens: Some(64),
-            temperature: Some(0.0),
-            grammar: None,
-            stop: None,
-        };
-        let started = std::time::Instant::now();
-        let resp = provider.complete(&request).await?;
-        let latency_ms = started.elapsed().as_millis() as u64;
-        let correct = substring_match(&resp.text, &case.needle_value)
-            || resp
-                .reasoning_text
-                .as_deref()
-                .is_some_and(|r| substring_match(r, &case.needle_value));
-        let response_preview: String = resp.text.chars().take(200).collect();
-        let reasoning_preview: String = resp
-            .reasoning_text
-            .as_deref()
-            .map(|r| r.chars().take(200).collect())
-            .unwrap_or_default();
-        eprintln!(
-            "[smoke/full] [{}/{}] -> latency={}ms correct={} prompt_tokens={:?} completion_tokens={:?} response={:?} reasoning={:?}",
-            idx + 1,
-            total,
-            latency_ms,
-            correct,
-            resp.prompt_tokens,
-            resp.completion_tokens,
-            response_preview,
-            reasoning_preview
-        );
-        writer.write_case(CaseMetric::for_full(
-            case.case_id.clone(),
-            correct,
-            latency_ms,
-            resp.prompt_tokens,
-            resp.completion_tokens,
-        ))?;
-    }
-    Ok(writer.finish())
-}
-
-/// LLM 不使用 ablation の共通 path。haystack を `chunk_text(target=2048)` で
-/// 分割し、`needle_key` を query に retrieval する。
-#[cfg(feature = "network")]
+/// 全 ablation 共通 path。haystack を `chunk_text(target=2048)` で分割し、
+/// `needle_key` を query に retrieval する。
 async fn run_niah_s_retrieval_only(
     opts: &SuiteRunOptions,
     cases: &[NiahCase],
     ablation: Ablation,
 ) -> anyhow::Result<SectionReport> {
-    debug_assert!(matches!(
-        ablation,
-        Ablation::Tier0 | Ablation::Tier01 | Ablation::Tier012
-    ));
     let mut writer = IncrementalSectionWriter::create(&opts.output_dir, "ruler-niah-s", ablation)?;
     let budget = compress_budget_from_env();
     let total = cases.len();
@@ -357,7 +238,6 @@ async fn run_niah_s_retrieval_only(
             Ablation::Tier01 | Ablation::Tier012 => {
                 hybrid_retrieve(&chunks, &case.needle_key, RULER_TOP_K).await?
             }
-            Ablation::Full => unreachable!("guarded by debug_assert"),
         };
         let concat = concat_for_judge(&retrieved);
         let retrieval_chars = concat.chars().count();
@@ -428,7 +308,7 @@ mod tests {
         let cases = build_cases(DEFAULT_SEED, &[4096]);
         let case = &cases[0];
         // target は seq_len * 4 = 16384 chars。needle 文 (~80 chars) 分の
-        // 余裕を見て、target ± 100 chars 範囲で生成されること。
+        // 余裕を見て、target ± 200 chars 範囲で生成されること。
         let target = 4096 * 4;
         let actual = case.haystack.len();
         assert!(
@@ -457,105 +337,25 @@ mod tests {
     }
 
     #[test]
-    fn build_prompt_includes_question_and_key() {
-        let cases = build_cases(DEFAULT_SEED, &[2048]);
-        let p = build_prompt(&cases[0]);
-        assert!(p.contains(&cases[0].needle_key));
-        assert!(p.contains("Final answer:"));
-        assert!(p.contains("=== DOCUMENT START ==="));
-    }
-
-    #[test]
     fn seq_lengths_from_env_falls_back_to_default() {
         std::env::remove_var("RULER_SEQ_LENGTHS");
         assert_eq!(seq_lengths_from_env(), DEFAULT_SEQ_LENGTHS.to_vec());
     }
-}
 
-#[cfg(all(test, feature = "network"))]
-mod network_tests {
-    use super::*;
-    use crate::suite::Suite;
-    use std::path::PathBuf;
-    use wiremock::matchers::{method, path};
-    use wiremock::{Mock, MockServer, ResponseTemplate};
-
-    fn opts_for(server_uri: String, output_dir: PathBuf) -> SuiteRunOptions {
+    fn opts_for(output_dir: std::path::PathBuf) -> SuiteRunOptions {
         SuiteRunOptions {
-            suite: Suite::Smoke,
+            suite: crate::suite::Suite::Smoke,
             output_dir,
-            llm_base_url: server_uri,
-            llm_model: "qwen3.5-4b".into(),
-            ablations: crate::suite::Ablation::default_set(),
+            ablations: Ablation::default_set(),
             help: false,
         }
     }
 
     #[tokio::test]
-    async fn niah_s_runs_each_case_and_marks_correctness() {
-        let server = MockServer::start().await;
-        // 全リクエストに固定 value で応答。1 件目の case の needle_value が
-        // 含まれる前提なので、その 1 件だけ correct=true、他は false に
-        // なる確率が高い。
-        let cases = build_cases(DEFAULT_SEED, DEFAULT_SEQ_LENGTHS);
-        let lucky_value = cases[0].needle_value.clone();
-        Mock::given(method("POST"))
-            .and(path("/v1/chat/completions"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "choices": [{
-                    "message": {
-                        "role": "assistant",
-                        "content": format!("The value is {}", lucky_value),
-                    }
-                }],
-                "usage": { "prompt_tokens": 1000, "completion_tokens": 6 }
-            })))
-            .mount(&server)
-            .await;
-
-        let tmp = tempfile::tempdir().unwrap();
-        let opts = opts_for(server.uri(), tmp.path().to_path_buf());
-        let report = run_niah_s_with_ablation(&opts, Ablation::Full)
-            .await
-            .expect("run");
-        assert_eq!(report.bench, "ruler-niah-s");
-        assert_eq!(report.ablation, "full");
-        assert_eq!(report.cases.len(), DEFAULT_SEQ_LENGTHS.len());
-        // 1 件目の case の needle_value が応答に含まれるので少なくとも 1 件 correct
-        assert!(report.cases.iter().any(|c| c.correct));
-        // それ以外は別の needle_value (case ごとに異なる) なので不一致
-        let first_correct_id = report.cases.iter().find(|c| c.correct).map(|c| &c.case_id);
-        assert_eq!(first_correct_id, Some(&"niah-2k".to_string()));
-    }
-
-    #[tokio::test]
-    async fn niah_s_propagates_provider_error() {
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/v1/chat/completions"))
-            .respond_with(ResponseTemplate::new(500))
-            .mount(&server)
-            .await;
-        let tmp = tempfile::tempdir().unwrap();
-        let opts = opts_for(server.uri(), tmp.path().to_path_buf());
-        let err = run_niah_s_with_ablation(&opts, Ablation::Full)
-            .await
-            .unwrap_err();
-        assert!(err.to_string().contains("500"), "got: {err}");
-    }
-
-    #[tokio::test]
-    async fn niah_s_tier0_retrieves_needle_chunk_without_llm() {
-        // env mutation を避けるため default seq_lengths のまま走らせる。
+    async fn niah_s_tier0_retrieves_needle_chunk() {
         // BM25 で needle_key を含む chunk が retrieve できれば correct=true。
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/v1/chat/completions"))
-            .respond_with(ResponseTemplate::new(500))
-            .mount(&server)
-            .await;
         let tmp = tempfile::tempdir().unwrap();
-        let opts = opts_for(server.uri(), tmp.path().to_path_buf());
+        let opts = opts_for(tmp.path().to_path_buf());
         let report = run_niah_s_with_ablation(&opts, Ablation::Tier0)
             .await
             .expect("tier-0 run");
@@ -577,24 +377,12 @@ mod network_tests {
             assert!(c.retrieved_chunks.is_some());
             assert!(c.compressed_chars.is_none());
         }
-        let received = server.received_requests().await.unwrap_or_default();
-        assert!(
-            received.is_empty(),
-            "tier-0 must not call LLM, got {} requests",
-            received.len()
-        );
     }
 
     #[tokio::test]
     async fn niah_s_tier012_records_compressed_chars() {
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/v1/chat/completions"))
-            .respond_with(ResponseTemplate::new(500))
-            .mount(&server)
-            .await;
         let tmp = tempfile::tempdir().unwrap();
-        let opts = opts_for(server.uri(), tmp.path().to_path_buf());
+        let opts = opts_for(tmp.path().to_path_buf());
         // RULER_COMPRESS_BUDGET_TOKENS は他の test が読まないので race なし。
         // RULER_SEQ_LENGTHS は他の test も読むので mutate しない (default 4 cases)。
         // default budget 2048 tok で under-budget の case は no-op (compressed

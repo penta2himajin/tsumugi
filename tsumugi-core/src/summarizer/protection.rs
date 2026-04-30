@@ -79,12 +79,12 @@ mod tests {
         let outcome = apply_summary_update(
             &mut c,
             "new",
-            SummaryMethod::LlmFull,
+            SummaryMethod::DistilBart,
             SummaryUpdate::default(),
         );
         assert_eq!(outcome, SummaryUpdateOutcome::Applied);
         assert_eq!(c.summary, "new");
-        assert_eq!(c.summary_method, SummaryMethod::LlmFull);
+        assert_eq!(c.summary_method, SummaryMethod::DistilBart);
     }
 
     #[test]
@@ -94,7 +94,7 @@ mod tests {
         let outcome = apply_summary_update(
             &mut c,
             "new",
-            SummaryMethod::LlmFull,
+            SummaryMethod::DistilBart,
             SummaryUpdate::forced(),
         );
         assert_eq!(outcome, SummaryUpdateOutcome::SkippedLocked);
@@ -108,7 +108,7 @@ mod tests {
         let outcome = apply_summary_update(
             &mut c,
             "new",
-            SummaryMethod::LlmFull,
+            SummaryMethod::DistilBart,
             SummaryUpdate::default(),
         );
         assert_eq!(outcome, SummaryUpdateOutcome::SkippedUserEdited);
@@ -122,7 +122,7 @@ mod tests {
         let outcome = apply_summary_update(
             &mut c,
             "new",
-            SummaryMethod::LlmFull,
+            SummaryMethod::DistilBart,
             SummaryUpdate::forced(),
         );
         assert_eq!(outcome, SummaryUpdateOutcome::Applied);
@@ -138,7 +138,7 @@ mod tests {
         let outcome = apply_summary_update(
             &mut c,
             "new",
-            SummaryMethod::LlmFull,
+            SummaryMethod::DistilBart,
             SummaryUpdate::forced(),
         );
         assert_eq!(outcome, SummaryUpdateOutcome::SkippedLocked);

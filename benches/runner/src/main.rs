@@ -13,7 +13,6 @@
 use std::process::ExitCode;
 
 mod adapters;
-mod health;
 mod metrics;
 mod report;
 mod suite;

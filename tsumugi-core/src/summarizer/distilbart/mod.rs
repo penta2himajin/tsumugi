@@ -209,7 +209,7 @@ impl DistilBartSummarizer {
         anyhow::bail!(
             "DistilBartSummarizer::summarize requires the `onnx` feature \
              (encoder_path = {:?}). Rebuild with `--features onnx` or use \
-             ExtractiveBM25Summarizer / LlmSummarizer instead.",
+             ExtractiveBM25Summarizer instead.",
             self.encoder_path
         )
     }

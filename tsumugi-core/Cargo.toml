@@ -5,19 +5,17 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "General-purpose memory-layer framework for LLM applications — core library"
+description = "Encoder-only memory-layer framework — core library"
 publish = false
 
 [features]
 default = []
-# Enable reqwest-backed OpenAI-compatible LLM and LM Studio embedding providers.
-network = ["dep:reqwest"]
 # Enable sqlx + SQLite persistence (`SqliteStorage`).
 sqlite = ["dep:sqlx"]
-# Enable ONNX-backed embedding provider (`OnnxEmbedding`).
-# Phase 4-γ Step 1 で ort + tokenizers 統合済み。multilingual-e5-small
-# 想定だが、constructor で任意 BERT/XLM-R 系 ONNX weights を渡せる。
-# 詳細は `docs/llm-free-stack-plan.md` § 5.2 (1)。
+# Enable ONNX-backed encoder impls (`OnnxEmbedding`, `LlmLingua2Compressor`,
+# `SetFitClassifier`, `NliZeroShotDetector`, `DistilBartSummarizer`).
+# Phase 4-γ で ort + tokenizers 統合済み。
+# 詳細は `docs/llm-free-stack-plan.md`。
 onnx = ["dep:ort", "dep:tokenizers", "dep:ndarray", "dep:tokio"]
 
 [dependencies]
@@ -31,7 +29,6 @@ thiserror.workspace = true
 tracing.workspace = true
 uuid.workspace = true
 
-reqwest = { workspace = true, optional = true }
 sqlx = { workspace = true, optional = true }
 # `onnx` feature only — keep heavy ML deps gated.
 ort = { version = "=2.0.0-rc.10", default-features = false, features = ["std", "ndarray", "download-binaries"], optional = true }
@@ -42,4 +39,3 @@ tokio = { workspace = true, optional = true, features = ["sync"] }
 [dev-dependencies]
 tempfile = "3"
 tokio.workspace = true
-wiremock.workspace = true

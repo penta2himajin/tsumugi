@@ -2,48 +2,35 @@
 //!
 //! Phase 4-α Step 2: 公式 `xiaowu0162/longmemeval` (HF datasets) の
 //! `longmemeval_oracle` ファイル (~15 MB JSON) から 6 question_type ×
-//! 5 問 = 30 問を seed 固定で層化抽出し、各問について haystack_sessions
-//! (evidence のみ) + question を prompt として LLM に投げ、`answer` を
-//! substring match で primary metric として判定する。
+//! 5 問 = 30 問を seed 固定で層化抽出し、各問について retrieval recall
+//! を substring match で primary metric として判定する。
 //!
-//! LLM judge による secondary metric は paper-exact 再現が必要に
-//! なった時点で別 PR で追加する (本 step では rule-based primary のみ)。
+//! LLM judge は削除済 (tsumugi 全体が encoder-only に確定したため
+//! `Ablation::Full` も削除)。判定は retrieved (or compressed) chunk に
+//! 対する substring match のみ。
 //!
 //! データセット位置: 既定 `benches/data/longmemeval_oracle` (環境変数
 //! `LONGMEMEVAL_PATH` で override 可)。download_datasets.sh が
 //! `hf download xiaowu0162/longmemeval --repo-type dataset` で取得する
 //! 想定。
 
-use crate::report::SectionReport;
+use crate::adapters::common::{
+    bm25_retrieve, concat_for_judge, hybrid_retrieve, tier_0_1_2_compress,
+};
+use crate::metrics::{substring_match, CaseMetric};
+use crate::report::{IncrementalSectionWriter, SectionReport};
 use crate::suite::{Ablation, SuiteRunOptions};
 use serde::{Deserialize, Deserializer};
 use std::path::{Path, PathBuf};
 
-#[cfg(feature = "network")]
-use crate::adapters::common::{
-    bm25_retrieve, concat_for_judge, hybrid_retrieve, tier_0_1_2_compress,
-};
-#[cfg(feature = "network")]
-use crate::metrics::{substring_match, CaseMetric};
-#[cfg(feature = "network")]
-use crate::report::IncrementalSectionWriter;
-#[cfg(feature = "network")]
-use tsumugi_core::providers::OpenAiCompatibleProvider;
-#[cfg(feature = "network")]
-use tsumugi_core::traits::llm::{CompletionRequest, LLMProvider};
-
 /// LongMemEval Oracle で BM25 / HybridRetriever に渡す top_k。
 /// `LME_TOP_K` env で override 可。
-#[cfg(feature = "network")]
 const DEFAULT_TOP_K: usize = 10;
 /// tier-0-1-2 用 truncate budget (whitespace tokens)。`LME_COMPRESS_BUDGET_TOKENS` で
 /// override 可。
-#[cfg(feature = "network")]
 const DEFAULT_COMPRESS_BUDGET_TOKENS: u32 = 2048;
-#[cfg(feature = "network")]
 const DEFAULT_COMPRESS_PRESERVE_TAIL: u32 = 256;
 
-#[cfg(feature = "network")]
 fn top_k_from_env() -> usize {
     std::env::var("LME_TOP_K")
         .ok()
@@ -52,7 +39,6 @@ fn top_k_from_env() -> usize {
         .unwrap_or(DEFAULT_TOP_K)
 }
 
-#[cfg(feature = "network")]
 fn compress_budget_from_env() -> u32 {
     std::env::var("LME_COMPRESS_BUDGET_TOKENS")
         .ok()
@@ -126,30 +112,12 @@ struct Message {
     content: String,
 }
 
-pub async fn run_oracle(opts: &SuiteRunOptions) -> anyhow::Result<SectionReport> {
-    let dataset_path = default_dataset_path();
-    run_oracle_with_ablation(opts, Ablation::Full, &dataset_path).await
-}
-
 pub fn default_dataset_path() -> PathBuf {
     std::env::var("LONGMEMEVAL_PATH")
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("benches/data/longmemeval_oracle"))
 }
 
-#[cfg(not(feature = "network"))]
-pub async fn run_oracle_with_ablation(
-    _opts: &SuiteRunOptions,
-    _ablation: Ablation,
-    _dataset_path: &Path,
-) -> anyhow::Result<SectionReport> {
-    anyhow::bail!(
-        "Suite::Oracle requires the `network` feature for the OpenAI-compatible \
-         LLM provider. Rebuild `tsumugi-bench` with `--features network`."
-    )
-}
-
-#[cfg(feature = "network")]
 pub async fn run_oracle_with_ablation(
     opts: &SuiteRunOptions,
     ablation: Ablation,
@@ -173,95 +141,16 @@ pub async fn run_oracle_with_ablation(
         entries.len()
     );
 
-    match ablation {
-        Ablation::Full => run_oracle_full(opts, &sampled).await,
-        Ablation::Tier0 | Ablation::Tier01 | Ablation::Tier012 => {
-            run_oracle_retrieval_only(opts, &sampled, ablation).await
-        }
-    }
+    run_oracle_retrieval_only(opts, &sampled, ablation).await
 }
 
-#[cfg(feature = "network")]
-async fn run_oracle_full(
-    opts: &SuiteRunOptions,
-    sampled: &[Entry],
-) -> anyhow::Result<SectionReport> {
-    let provider = OpenAiCompatibleProvider::new(&opts.llm_base_url, &opts.llm_model);
-    let mut writer =
-        IncrementalSectionWriter::create(&opts.output_dir, "longmemeval-oracle", Ablation::Full)?;
-    let total = sampled.len();
-    for (idx, entry) in sampled.iter().enumerate() {
-        eprintln!(
-            "[oracle/full] [{}/{}] type={} id={} question={:?}",
-            idx + 1,
-            total,
-            entry.question_type,
-            entry.question_id,
-            entry.question.chars().take(80).collect::<String>()
-        );
-        let prompt = build_prompt(entry);
-        let request = CompletionRequest {
-            prompt,
-            // 64 tok だと "Final answer:" 前置きで詰まって answer に
-            // 到達できないケースが多発したため (実機 oracle smoke #3
-            // で全件 max_tokens 切れ)、128 に拡大。CPU 推論なので
-            // 出力時間が直接 latency に乗る点だけ留意。
-            max_tokens: Some(128),
-            temperature: Some(0.0),
-            grammar: None,
-            stop: None,
-        };
-        let started = std::time::Instant::now();
-        let resp = provider.complete(&request).await?;
-        let latency_ms = started.elapsed().as_millis() as u64;
-        // Qwen3 等の thinking モデルでは answer が `reasoning_content`
-        // (= `resp.reasoning_text`) に出る場合がある。両方に対して
-        // substring match を行い、どちらでも答えが含まれていれば correct。
-        let correct = substring_match(&resp.text, &entry.answer)
-            || resp
-                .reasoning_text
-                .as_deref()
-                .is_some_and(|r| substring_match(r, &entry.answer));
-        let response_preview: String = resp.text.chars().take(200).collect();
-        let reasoning_preview: String = resp
-            .reasoning_text
-            .as_deref()
-            .map(|r| r.chars().take(200).collect())
-            .unwrap_or_default();
-        eprintln!(
-            "[oracle/full] [{}/{}] -> latency={}ms correct={} prompt_tokens={:?} completion_tokens={:?} response={:?} reasoning={:?}",
-            idx + 1,
-            total,
-            latency_ms,
-            correct,
-            resp.prompt_tokens,
-            resp.completion_tokens,
-            response_preview,
-            reasoning_preview
-        );
-        writer.write_case(CaseMetric::for_full(
-            entry.question_id.clone(),
-            correct,
-            latency_ms,
-            resp.prompt_tokens,
-            resp.completion_tokens,
-        ))?;
-    }
-    Ok(writer.finish())
-}
-
-/// LLM 不使用 ablation (tier-0 / tier-0-1 / tier-0-1-2) の共通 path。
-/// 各 entry の `haystack_sessions[i]` を 1 chunk として扱う (粒度: session)。
-#[cfg(feature = "network")]
+/// 全 ablation 共通 path。各 entry の `haystack_sessions[i]` を 1 chunk と
+/// して扱う (粒度: session)。
 async fn run_oracle_retrieval_only(
     opts: &SuiteRunOptions,
     sampled: &[Entry],
     ablation: Ablation,
 ) -> anyhow::Result<SectionReport> {
-    debug_assert!(matches!(
-        ablation,
-        Ablation::Tier0 | Ablation::Tier01 | Ablation::Tier012
-    ));
     let mut writer =
         IncrementalSectionWriter::create(&opts.output_dir, "longmemeval-oracle", ablation)?;
     let top_k = top_k_from_env();
@@ -284,7 +173,6 @@ async fn run_oracle_retrieval_only(
             Ablation::Tier01 | Ablation::Tier012 => {
                 hybrid_retrieve(&chunks, &entry.question, top_k).await?
             }
-            Ablation::Full => unreachable!("guarded by debug_assert"),
         };
         let concat = concat_for_judge(&retrieved);
         let retrieval_chars = concat.chars().count();
@@ -371,43 +259,8 @@ fn fnv1a_hash(bytes: &[u8], seed: u64) -> u64 {
     hash
 }
 
-fn build_prompt(entry: &Entry) -> String {
-    let mut prompt = String::new();
-    prompt.push_str(
-        "Below are past conversation history sessions. Read them carefully and \
-         answer the user's question based ONLY on the information provided.\n\n",
-    );
-    for (i, session) in entry.haystack_sessions.iter().enumerate() {
-        let date = entry
-            .haystack_dates
-            .get(i)
-            .map(String::as_str)
-            .unwrap_or("(unknown date)");
-        prompt.push_str(&format!("--- Session {} ({}) ---\n", i + 1, date));
-        for msg in session {
-            prompt.push_str(&format!("{}: {}\n", msg.role, msg.content));
-        }
-        prompt.push('\n');
-    }
-    let asked_on = if entry.question_date.is_empty() {
-        "unknown date".to_string()
-    } else {
-        entry.question_date.clone()
-    };
-    // Qwen3.5 は `/think` / `/nothink` の soft switch をサポートしない
-    // (Qwen3 限定の機能、Qwen3.5 model card で明示的に non-supported)
-    // ので、thinking 抑制は llama-server 側で `--chat-template-kwargs
-    // '{"enable_thinking":false}'` を渡す形で実現する
-    // (`benches/scripts/start_llama_server.sh` 参照)。
-    prompt.push_str(&format!(
-        "Question (asked on {}): {}\nFinal answer:",
-        asked_on, entry.question
-    ));
-    prompt
-}
-
 // ---------------------------------------------------------------------------
-// テスト用 fixture: tests / network_tests 双方から共有する。
+// テスト用 fixture
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -435,6 +288,7 @@ fn fixture_entries() -> Vec<Entry> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
 
     #[test]
     fn stratified_sample_returns_5_per_type_for_6_types() {
@@ -510,41 +364,6 @@ mod tests {
         assert_eq!(entries[0].answer, "true");
     }
 
-    #[test]
-    fn build_prompt_includes_session_date_and_question() {
-        let entries = fixture_entries();
-        let e = &entries[0];
-        let p = build_prompt(e);
-        assert!(p.contains("--- Session 1 (2023/12/01) ---"), "prompt: {p}");
-        assert!(p.contains("Question (asked on 2024/01/01)"));
-        assert!(p.contains("Final answer:"));
-        assert!(p.contains(&e.question));
-    }
-
-    #[test]
-    fn build_prompt_does_not_include_no_think_directive() {
-        // Qwen3.5 は `/think` / `/nothink` soft switch を非サポート
-        // (Qwen3 限定の機能、Qwen3.5 公式 model card で明示)。
-        // thinking 抑制は server 側で `--chat-template-kwargs` で行う
-        // (`benches/scripts/start_llama_server.sh` 参照)。prompt 内に
-        // `/no_think` を残すと no-op な dead text になるので削除を保証。
-        let entries = fixture_entries();
-        let p = build_prompt(&entries[0]);
-        assert!(
-            !p.contains("/no_think"),
-            "prompt should not contain /no_think (Qwen3.5 ignores it): {p}"
-        );
-    }
-}
-
-#[cfg(all(test, feature = "network"))]
-mod network_tests {
-    use super::*;
-    use crate::suite::Suite;
-    use std::io::Write;
-    use wiremock::matchers::{method, path};
-    use wiremock::{Mock, MockServer, ResponseTemplate};
-
     fn write_fixture_dataset(dir: &Path) -> PathBuf {
         let path = dir.join("longmemeval_oracle");
         let entries = fixture_entries();
@@ -577,117 +396,20 @@ mod network_tests {
         path
     }
 
-    fn opts_for(server_uri: String, output_dir: PathBuf) -> SuiteRunOptions {
+    fn opts_for(output_dir: PathBuf) -> SuiteRunOptions {
         SuiteRunOptions {
-            suite: Suite::Oracle,
+            suite: crate::suite::Suite::Oracle,
             output_dir,
-            llm_base_url: server_uri,
-            llm_model: "qwen3.5-4b".into(),
-            ablations: crate::suite::Ablation::default_set(),
+            ablations: Ablation::default_set(),
             help: false,
         }
     }
 
     #[tokio::test]
-    async fn oracle_runs_30_cases_and_marks_correctness() {
-        let server = MockServer::start().await;
-        // 全問共通で "Answer-single-session-user-3" を含む応答を返す。
-        // fixture では single-session-user-idx3 の正解が
-        // "Answer-single-session-user-3" なのでこの 1 問だけ correct。
-        Mock::given(method("POST"))
-            .and(path("/v1/chat/completions"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "choices": [{ "message": { "role": "assistant",
-                    "content": "Final answer: Answer-single-session-user-3" } }],
-                "usage": { "prompt_tokens": 100, "completion_tokens": 12 }
-            })))
-            .mount(&server)
-            .await;
-
+    async fn oracle_tier0_runs_retrieval_only() {
         let tmp = tempfile::tempdir().unwrap();
         let dataset_path = write_fixture_dataset(tmp.path());
-
-        let opts = opts_for(server.uri(), tmp.path().to_path_buf());
-        let report = run_oracle_with_ablation(&opts, Ablation::Full, &dataset_path)
-            .await
-            .expect("run_oracle");
-
-        assert_eq!(report.bench, "longmemeval-oracle");
-        assert_eq!(report.ablation, "full");
-        assert_eq!(report.cases.len(), 30);
-        // 1 case correct (single-session-user-idx3 の場合のみ substring match)
-        // ただし stratified_sample で idx3 が抽出された保証は無いので、
-        // correct >= 0 だけ確認 (確率的判定は別 test で実施)
-        let exact_match_cases: Vec<_> = report
-            .cases
-            .iter()
-            .filter(|c| c.case_id == "single-session-user-idx3")
-            .collect();
-        if !exact_match_cases.is_empty() {
-            assert!(exact_match_cases[0].correct);
-        }
-    }
-
-    #[tokio::test]
-    async fn oracle_propagates_provider_error() {
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/v1/chat/completions"))
-            .respond_with(ResponseTemplate::new(500))
-            .mount(&server)
-            .await;
-        let tmp = tempfile::tempdir().unwrap();
-        let dataset_path = write_fixture_dataset(tmp.path());
-
-        let opts = opts_for(server.uri(), tmp.path().to_path_buf());
-        let err = run_oracle_with_ablation(&opts, Ablation::Full, &dataset_path)
-            .await
-            .unwrap_err();
-        assert!(err.to_string().contains("500"), "got: {err}");
-    }
-
-    #[tokio::test]
-    async fn oracle_records_aggregate_correct_count() {
-        let server = MockServer::start().await;
-        // どの問にも "Answer-" を含む応答を返す → 30 件中 30 件 substring match
-        // (substring_match は case-insensitive で "answer-" が小文字含めて
-        //  fixture answer 全てに含まれる)
-        Mock::given(method("POST"))
-            .and(path("/v1/chat/completions"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "choices": [{ "message": { "role": "assistant",
-                    "content": "I think this is Answer-something-relevant" } }],
-                "usage": { "prompt_tokens": 100, "completion_tokens": 12 }
-            })))
-            .mount(&server)
-            .await;
-
-        let tmp = tempfile::tempdir().unwrap();
-        let dataset_path = write_fixture_dataset(tmp.path());
-        let opts = opts_for(server.uri(), tmp.path().to_path_buf());
-        let report = run_oracle_with_ablation(&opts, Ablation::Full, &dataset_path)
-            .await
-            .unwrap();
-        // "Answer-" は fixture answer (e.g. "Answer-single-session-user-3") の
-        // prefix だが、"Answer-something-relevant" 全体は specific answer
-        // (e.g. "Answer-single-session-user-3") を substring 含まない。
-        // よって correct == 0。primary が確率的にならないことを保証する。
-        assert_eq!(report.aggregate.correct, 0);
-    }
-
-    #[tokio::test]
-    async fn oracle_tier0_runs_without_llm_calls() {
-        let server = MockServer::start().await;
-        // tier-0 では LLM を呼ばないので、POST が来たら 500 で目立たせる
-        Mock::given(method("POST"))
-            .and(path("/v1/chat/completions"))
-            .respond_with(ResponseTemplate::new(500))
-            .mount(&server)
-            .await;
-
-        let tmp = tempfile::tempdir().unwrap();
-        let dataset_path = write_fixture_dataset(tmp.path());
-        let opts = opts_for(server.uri(), tmp.path().to_path_buf());
+        let opts = opts_for(tmp.path().to_path_buf());
         let report = run_oracle_with_ablation(&opts, Ablation::Tier0, &dataset_path)
             .await
             .expect("tier-0 run");
@@ -702,25 +424,13 @@ mod network_tests {
             assert!(c.prompt_tokens.is_none());
             assert!(c.completion_tokens.is_none());
         }
-        let received = server.received_requests().await.unwrap_or_default();
-        assert!(
-            received.is_empty(),
-            "tier-0 must not call LLM, got {} requests",
-            received.len()
-        );
     }
 
     #[tokio::test]
-    async fn oracle_tier01_uses_hybrid_retrieval_and_no_llm() {
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/v1/chat/completions"))
-            .respond_with(ResponseTemplate::new(500))
-            .mount(&server)
-            .await;
+    async fn oracle_tier01_uses_hybrid_retrieval() {
         let tmp = tempfile::tempdir().unwrap();
         let dataset_path = write_fixture_dataset(tmp.path());
-        let opts = opts_for(server.uri(), tmp.path().to_path_buf());
+        let opts = opts_for(tmp.path().to_path_buf());
         let report = run_oracle_with_ablation(&opts, Ablation::Tier01, &dataset_path)
             .await
             .expect("tier-0-1 run");
@@ -729,21 +439,13 @@ mod network_tests {
             assert!(c.compressed_chars.is_none());
             assert!(c.retrieved_chunks.is_some());
         }
-        let received = server.received_requests().await.unwrap_or_default();
-        assert!(received.is_empty(), "tier-0-1 must not call LLM");
     }
 
     #[tokio::test]
-    async fn oracle_tier012_applies_truncate_compressor() {
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/v1/chat/completions"))
-            .respond_with(ResponseTemplate::new(500))
-            .mount(&server)
-            .await;
+    async fn oracle_tier012_applies_compressor() {
         let tmp = tempfile::tempdir().unwrap();
         let dataset_path = write_fixture_dataset(tmp.path());
-        let opts = opts_for(server.uri(), tmp.path().to_path_buf());
+        let opts = opts_for(tmp.path().to_path_buf());
         // 小さい budget で圧縮効果を確実に observe する
         std::env::set_var("LME_COMPRESS_BUDGET_TOKENS", "8");
         let report = run_oracle_with_ablation(&opts, Ablation::Tier012, &dataset_path)

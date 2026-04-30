@@ -32,7 +32,6 @@ impl SuiteReport {
     pub fn new(suite: Suite) -> Self {
         Self {
             suite: match suite {
-                Suite::Health => "health",
                 Suite::Smoke => "smoke",
                 Suite::Oracle => "oracle",
                 Suite::Cr => "cr",
@@ -176,14 +175,14 @@ mod tests {
         // (timeout / crash 時の partial data 保護)。
         let dir = tempdir().expect("tempdir");
         let mut writer =
-            IncrementalSectionWriter::create(dir.path(), "longmemeval-oracle", Ablation::Full)
+            IncrementalSectionWriter::create(dir.path(), "longmemeval-oracle", Ablation::Tier0)
                 .expect("create");
         writer
             .write_case(CaseMetric::for_full("q1", true, 100, Some(10), Some(20)))
             .expect("write q1");
         // q1 だけの状態で別プロセスから読めることを確認
         let intermediate =
-            std::fs::read_to_string(dir.path().join("longmemeval-oracle/full.jsonl")).unwrap();
+            std::fs::read_to_string(dir.path().join("longmemeval-oracle/tier-0.jsonl")).unwrap();
         assert!(
             intermediate.contains("q1"),
             "q1 not durable: {intermediate}"
@@ -194,7 +193,7 @@ mod tests {
             .write_case(CaseMetric::for_full("q2", false, 200, Some(30), Some(40)))
             .expect("write q2");
         let after_q2 =
-            std::fs::read_to_string(dir.path().join("longmemeval-oracle/full.jsonl")).unwrap();
+            std::fs::read_to_string(dir.path().join("longmemeval-oracle/tier-0.jsonl")).unwrap();
         assert!(after_q2.contains("q1"));
         assert!(after_q2.contains("q2"));
         // 2 行 (改行終端なので split は 3 要素、最後は空)
@@ -202,7 +201,7 @@ mod tests {
 
         let report = writer.finish();
         assert_eq!(report.bench, "longmemeval-oracle");
-        assert_eq!(report.ablation, "full");
+        assert_eq!(report.ablation, "tier-0");
         assert_eq!(report.cases.len(), 2);
         assert_eq!(report.aggregate.correct, 1);
     }
@@ -213,16 +212,17 @@ mod tests {
         let dir = tempdir().expect("tempdir");
         {
             let mut w =
-                IncrementalSectionWriter::create(dir.path(), "ruler-niah-s", Ablation::Full)
+                IncrementalSectionWriter::create(dir.path(), "ruler-niah-s", Ablation::Tier0)
                     .unwrap();
             w.write_case(CaseMetric::for_full("old", false, 1, None, None))
                 .unwrap();
         }
         let mut w =
-            IncrementalSectionWriter::create(dir.path(), "ruler-niah-s", Ablation::Full).unwrap();
+            IncrementalSectionWriter::create(dir.path(), "ruler-niah-s", Ablation::Tier0).unwrap();
         w.write_case(CaseMetric::for_full("new", true, 2, None, None))
             .unwrap();
-        let content = std::fs::read_to_string(dir.path().join("ruler-niah-s/full.jsonl")).unwrap();
+        let content =
+            std::fs::read_to_string(dir.path().join("ruler-niah-s/tier-0.jsonl")).unwrap();
         assert!(content.contains("new"));
         assert!(!content.contains("old"));
     }

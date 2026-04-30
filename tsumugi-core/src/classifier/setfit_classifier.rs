@@ -257,7 +257,7 @@ impl QueryClassifier for SetFitClassifier {
         anyhow::bail!(
             "SetFitClassifier::classify requires the `onnx` feature \
              (model_path = {:?}). Rebuild with `--features onnx` or use \
-             RegexClassifier / BertClassifier instead.",
+             RegexClassifier instead.",
             self.embedder.model_path
         )
     }

@@ -1,24 +1,23 @@
 //! Cross-adapter helpers: chunking, retrieval, compression.
 //!
-//! Phase 4-α Step 3 PR ③ で導入。LongMemEval / RULER / MemoryAgentBench
-//! の各 adapter で共有するユーティリティを集約する。
+//! Phase 4-α Step 3 PR ③ で導入、LLM 削除に伴い Phase 4-α Step 4 直前で
+//! encoder-only 専用に整理した。LongMemEval / RULER / MemoryAgentBench の
+//! 各 adapter で共有するユーティリティを集約する。
 //!
 //! 設計方針:
-//! - tier-0 / tier-0-1 / tier-0-1-2 ablation は **LLM 不使用**。
-//!   retrieval / compression のみで判定する。これらの ablation で使う
-//!   helper を 1 ファイルに集めた。
+//! - 全 ablation (`tier-0` / `tier-0-1` / `tier-0-1-2`) は retrieval +
+//!   compression のみで判定する。判定は retrieved (or compressed) chunk に
+//!   対する substring match。
 //! - tier-0-1 の embedding は default で MockEmbedding (FNV-1a 64-dim、
 //!   deterministic) を使い、`onnx` feature 有効 + `TSUMUGI_E5_MODEL_PATH`
 //!   と `TSUMUGI_E5_TOKENIZER_PATH` の両方が設定されている場合は
 //!   OnnxEmbedding (multilingual-e5-small ONNX) に切り替える。
 //!   Phase 4-γ Step 1 で導入。
 //! - tier-0-1-2 の compressor は default で `TruncateCompressor` (head +
-//!   tail tokens with ellipsis、LLM 不使用)。`onnx` feature 有効 +
+//!   tail tokens with ellipsis)。`onnx` feature 有効 +
 //!   `TSUMUGI_LLMLINGUA2_MODEL_PATH` / `TSUMUGI_LLMLINGUA2_TOKENIZER_PATH`
 //!   の両方が設定されていれば `LlmLingua2Compressor` (per-token classifier、
-//!   paper-faithful、LLM 不使用) に切り替わる。Phase 4-γ Step 2 で導入。
-//!   `LlmDelegationCompressor` (旧 `LlmLinguaCompressor`) は LLM 委譲版で
-//!   ablation の "LLM 不使用 baseline" 軸を破壊するため不採用。
+//!   paper-faithful) に切り替わる。Phase 4-γ Step 2 で導入。
 //!
 //! 詳細は `docs/ci-benchmark-integration-plan.md` §「Tier 別 ablation の分離」。
 
@@ -81,7 +80,6 @@ pub fn concat_for_judge(chunks: &[String]) -> String {
     chunks.join("\n\n---\n\n")
 }
 
-#[cfg(feature = "network")]
 mod retrieve {
     use std::collections::HashMap;
     use std::sync::Arc;
@@ -230,7 +228,6 @@ mod retrieve {
     }
 }
 
-#[cfg(feature = "network")]
 pub use retrieve::{bm25_retrieve, hybrid_retrieve, tier_0_1_2_compress};
 
 #[cfg(test)]
@@ -290,7 +287,7 @@ mod tests {
     }
 }
 
-#[cfg(all(test, feature = "network"))]
+#[cfg(test)]
 mod retrieve_tests {
     use super::*;
     // truncate_compress は tier-0-1-2 fallback 専用なので pub use 経由では
