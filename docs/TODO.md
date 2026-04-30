@@ -168,7 +168,21 @@
       (~278M, MIT、多言語)、英語専用なら `MoritzLaurer/DeBERTa-v3-base-mnli-fever-anli`
       (~184M, MIT) に constructor で差し替え可。GLiNER2 は Phase 4-β /
       5 の研究 follow-up に降格 (latency 制約が顕在化したら採用検討)
-- [ ] DistilBART 実装 (`Summarizer`)
+- [x] **DistilBART 実装** (`Summarizer`、PR、2026-04-30):
+      `tsumugi-core/src/summarizer/distilbart/{mod.rs,inference.rs}` 新設、
+      `DistilBartSummarizer` を encoder + decoder + decoder_with_past の
+      3 ONNX graph 構成で実装。Optimum の `summarization-with-past` task
+      export を直接食う。greedy 生成 loop + KV cache reuse
+      (past_key_values.* スロットを動的に発見、layer 数に依存しない実装)
+      で各 step O(1) attn cost。`min_output_length` で EOS 抑止、
+      `max_output_length` で hard cutoff。`SummaryMethod::DistilBart`
+      enum variant を Alloy / 生成 Rust / 生成 TS / hand-written domain で
+      新設 (`models/tsumugi/core.als` に `one sig DistilBart extends
+      SummaryMethod {}` を追加して `scripts/regen.sh` で再生成)。
+      bench infra: `benches/scripts/download_distilbart.sh`
+      (`optimum-cli export onnx --task summarization-with-past`)、
+      `bench.yml` に `actions/cache@v4` + `$GITHUB_ENV` 経由の
+      `TSUMUGI_DISTILBART_DIR` 配線
 
 要検討事項 (本フェーズ着手前):
 
@@ -230,4 +244,4 @@
 
 ---
 
-*最終更新: 2026-04-30 (Phase 4-γ Step 4 完了で更新、GLiNER2 → NLI に降格)*
+*最終更新: 2026-04-30 (Phase 4-γ Step 5 完了で更新)*

@@ -31,7 +31,7 @@ export interface Chunk {
 
 export type SourceLocationValue = "File" | "Custom";
 
-export type SummaryMethod = "LlmFull" | "LlmLingua2" | "SelectiveContext" | "ExtractiveBM25" | "UserManual" | "NoMethod";
+export type SummaryMethod = "LlmFull" | "LlmLingua2" | "SelectiveContext" | "ExtractiveBM25" | "DistilBart" | "UserManual" | "NoMethod";
 
 /**
  * @invariant SupersededByDirect

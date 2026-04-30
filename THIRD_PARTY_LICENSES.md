@@ -121,6 +121,25 @@
   diff は constructor 引数のみ。MNLI ~90% / ANLI ~50%。多言語不要
   ユースケースで latency / 精度トレードを取る場合の選択肢。
 
+### sshleifer/distilbart-cnn-6-6 (Summarizer default)
+
+- HF: `sshleifer/distilbart-cnn-6-6`
+- ONNX: HF Hub にネイティブ ONNX 配布なし。CI 内で
+  `optimum-cli export onnx --task summarization-with-past` 経由で 3 ONNX
+  graph (encoder / decoder / decoder_with_past) を都度 export し、
+  `~/.cache/tsumugi/distilbart-cnn-6-6/` に出力する
+  (`benches/scripts/download_distilbart.sh`)。export 結果は
+  `actions/cache` でキャッシュ。
+- License: **Apache-2.0** (HF model card で確認、上流 BART-large-CNN
+  も Apache-2.0)
+- 備考: 230M params (BART-large から distilled、6 encoder + 6 decoder
+  layers)。CNN/DailyMail ニュース要約で fine-tune。CPU で 1K-tok 入力に
+  対し ~1 秒で 80-150 tok の要約を greedy 生成。tsumugi では
+  `DistilBartSummarizer` の default モデル、`SummaryMethod::DistilBart`
+  variant に対応。日本語要約には不向き (英語ニュースのみ訓練)、
+  日本語向けには `ku-nlp/bart-base-japanese` 等への切替が必要だが
+  ONNX export 経路は別途検証要。
+
 ---
 
 ## ランタイム / バイナリ

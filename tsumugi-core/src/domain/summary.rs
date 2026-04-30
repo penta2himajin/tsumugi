@@ -11,6 +11,7 @@ pub enum SummaryMethod {
     LlmLingua2,
     SelectiveContext,
     ExtractiveBM25,
+    DistilBart,
     UserManual,
     /// Raw leaf — summary not generated. Corresponds to `NoMethod` in Alloy.
     #[default]
