@@ -27,7 +27,7 @@ use std::path::{Path, PathBuf};
 
 #[cfg(feature = "network")]
 use crate::adapters::common::{
-    bm25_retrieve, chunk_text, concat_for_judge, hybrid_retrieve, tail_chars, truncate_compress,
+    bm25_retrieve, chunk_text, concat_for_judge, hybrid_retrieve, tail_chars, tier_0_1_2_compress,
 };
 #[cfg(feature = "network")]
 use crate::metrics::{substring_match_any, CaseMetric};
@@ -279,7 +279,7 @@ async fn run_cr_retrieval_only(
         let retrieval_chars = concat.chars().count();
         let (judge_text, compressed_chars) = if matches!(ablation, Ablation::Tier012) {
             let compressed =
-                truncate_compress(&concat, budget, DEFAULT_COMPRESS_PRESERVE_TAIL).await?;
+                tier_0_1_2_compress(&concat, budget, DEFAULT_COMPRESS_PRESERVE_TAIL).await?;
             let compressed_len = compressed.chars().count();
             (compressed, Some(compressed_len))
         } else {

@@ -89,6 +89,16 @@ jobs:
           path: ~/.cache/huggingface/hub
           key: hf-bench-v1-qwen-${{ inputs.qwen_revision }}-${{ hashFiles('benches/scripts/download_models.sh') }}
 
+      - name: Cache LLMLingua-2 ONNX export
+        # Phase 4-γ Step 2: optimum-cli export を毎回回すと job 開始から
+        # ~90 秒 (mBERT-base 110M の DL + ONNX export)。export 結果を
+        # cache すれば再 run は instant。`download_llmlingua2.sh` の
+        # hash を key に含めて script を変えると bust する。
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/tsumugi/llmlingua2-mbert
+          key: llmlingua2-v1-${{ hashFiles('benches/scripts/download_llmlingua2.sh') }}
+
       - name: Install llama.cpp release
         env:
           LLAMA_CPP_TAG: ${{ inputs.llama_cpp_tag }}
@@ -115,6 +125,14 @@ jobs:
         # `TSUMUGI_E5_MODEL_PATH` / `TSUMUGI_E5_TOKENIZER_PATH` が両方
         # 設定されていれば tier-0-1 を OnnxEmbedding に切り替える。
         run: ./benches/scripts/resolve_e5_paths.sh >> "$GITHUB_ENV"
+
+      - name: Export + resolve LLMLingua-2 mBERT paths
+        # Phase 4-γ Step 2: optimum-cli で `microsoft/llmlingua-2-bert-base-multilingual-cased-meetingbank`
+        # を ONNX export し、`TSUMUGI_LLMLINGUA2_MODEL_PATH` /
+        # `TSUMUGI_LLMLINGUA2_TOKENIZER_PATH` を $GITHUB_ENV に流し込む。
+        # bench runner は両方が設定されていれば tier-0-1-2 の compressor を
+        # `TruncateCompressor` から `LlmLingua2Compressor` に切り替える。
+        run: ./benches/scripts/download_llmlingua2.sh >> "$GITHUB_ENV"
 
       - name: Build runner with network + onnx features
         # `onnx` feature 有効時は ort 2.x が ONNX Runtime バイナリを
