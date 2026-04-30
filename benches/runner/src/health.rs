@@ -15,6 +15,8 @@ use crate::suite::SuiteRunOptions;
 #[cfg(feature = "network")]
 use crate::metrics::{substring_match, CaseMetric};
 #[cfg(feature = "network")]
+use crate::report::IncrementalSectionWriter;
+#[cfg(feature = "network")]
 use crate::suite::Ablation;
 #[cfg(feature = "network")]
 use tsumugi_core::providers::OpenAiCompatibleProvider;
@@ -53,7 +55,8 @@ pub async fn run_health(opts: &SuiteRunOptions) -> anyhow::Result<SectionReport>
 #[cfg(feature = "network")]
 async fn run_health_inner(opts: &SuiteRunOptions, trials: usize) -> anyhow::Result<SectionReport> {
     let provider = OpenAiCompatibleProvider::new(&opts.llm_base_url, &opts.llm_model);
-    let mut cases: Vec<CaseMetric> = Vec::with_capacity(trials * PROBES.len());
+    let mut writer =
+        IncrementalSectionWriter::create(&opts.output_dir, "llm-health", Ablation::Full)?;
     for trial in 0..trials {
         for probe in PROBES {
             let request = CompletionRequest {
@@ -73,16 +76,16 @@ async fn run_health_inner(opts: &SuiteRunOptions, trials: usize) -> anyhow::Resu
                     .reasoning_text
                     .as_deref()
                     .is_some_and(|r| substring_match(r, probe.expected_substring));
-            cases.push(CaseMetric {
+            writer.write_case(CaseMetric {
                 case_id: format!("{}-trial-{}", probe.case_id, trial),
                 correct,
                 latency_ms,
                 prompt_tokens: resp.prompt_tokens,
                 completion_tokens: resp.completion_tokens,
-            });
+            })?;
         }
     }
-    Ok(SectionReport::new("llm-health", Ablation::Full, cases))
+    Ok(writer.finish())
 }
 
 #[cfg(not(feature = "network"))]
@@ -101,17 +104,24 @@ mod tests {
     use super::*;
     use crate::suite::Suite;
     use std::path::PathBuf;
+    use tempfile::TempDir;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    fn opts_for(server_uri: String) -> SuiteRunOptions {
+    fn opts_for(server_uri: String, output_dir: PathBuf) -> SuiteRunOptions {
         SuiteRunOptions {
             suite: Suite::Health,
-            output_dir: PathBuf::from("/tmp/ignored"),
+            output_dir,
             llm_base_url: server_uri,
             llm_model: "qwen3.5-4b-instruct".into(),
             help: false,
         }
+    }
+
+    fn fresh_opts(server_uri: String) -> (SuiteRunOptions, TempDir) {
+        let tmp = tempfile::tempdir().unwrap();
+        let opts = opts_for(server_uri, tmp.path().to_path_buf());
+        (opts, tmp)
     }
 
     fn mock_response(content: &str) -> ResponseTemplate {
@@ -137,7 +147,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let opts = opts_for(server.uri());
+        let (opts, _tmp) = fresh_opts(server.uri());
         let report = run_health_inner(&opts, 2).await.expect("run_health");
         assert_eq!(report.bench, "llm-health");
         assert_eq!(report.ablation, "full");
@@ -165,7 +175,7 @@ mod tests {
             .respond_with(ResponseTemplate::new(503))
             .mount(&server)
             .await;
-        let opts = opts_for(server.uri());
+        let (opts, _tmp) = fresh_opts(server.uri());
         let err = run_health_inner(&opts, 1).await.unwrap_err();
         assert!(err.to_string().contains("503"), "got: {err}");
     }
@@ -186,7 +196,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let opts = opts_for(server.uri());
+        let (opts, _tmp) = fresh_opts(server.uri());
         let report = run_health_inner(&opts, 1).await.expect("run_health");
         assert_eq!(report.cases.len(), 2);
         assert!(report.cases.iter().all(|c| c.correct));

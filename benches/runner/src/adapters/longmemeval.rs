@@ -22,6 +22,8 @@ use std::path::{Path, PathBuf};
 #[cfg(feature = "network")]
 use crate::metrics::{substring_match, CaseMetric};
 #[cfg(feature = "network")]
+use crate::report::IncrementalSectionWriter;
+#[cfg(feature = "network")]
 use crate::suite::Ablation;
 #[cfg(feature = "network")]
 use tsumugi_core::providers::OpenAiCompatibleProvider;
@@ -123,7 +125,8 @@ async fn run_oracle_with_dataset(
     );
 
     let provider = OpenAiCompatibleProvider::new(&opts.llm_base_url, &opts.llm_model);
-    let mut cases = Vec::with_capacity(sampled.len());
+    let mut writer =
+        IncrementalSectionWriter::create(&opts.output_dir, "longmemeval-oracle", Ablation::Full)?;
     let total = sampled.len();
     for (idx, entry) in sampled.iter().enumerate() {
         eprintln!(
@@ -174,19 +177,15 @@ async fn run_oracle_with_dataset(
             response_preview,
             reasoning_preview
         );
-        cases.push(CaseMetric {
+        writer.write_case(CaseMetric {
             case_id: entry.question_id.clone(),
             correct,
             latency_ms,
             prompt_tokens: resp.prompt_tokens,
             completion_tokens: resp.completion_tokens,
-        });
+        })?;
     }
-    Ok(SectionReport::new(
-        "longmemeval-oracle",
-        Ablation::Full,
-        cases,
-    ))
+    Ok(writer.finish())
 }
 
 #[cfg(not(feature = "network"))]
@@ -450,10 +449,10 @@ mod network_tests {
         path
     }
 
-    fn opts_for(server_uri: String) -> SuiteRunOptions {
+    fn opts_for(server_uri: String, output_dir: PathBuf) -> SuiteRunOptions {
         SuiteRunOptions {
             suite: Suite::Oracle,
-            output_dir: PathBuf::from("/tmp/ignored"),
+            output_dir,
             llm_base_url: server_uri,
             llm_model: "qwen3.5-4b".into(),
             help: false,
@@ -479,7 +478,7 @@ mod network_tests {
         let tmp = tempfile::tempdir().unwrap();
         let dataset_path = write_fixture_dataset(tmp.path());
 
-        let opts = opts_for(server.uri());
+        let opts = opts_for(server.uri(), tmp.path().to_path_buf());
         let report = run_oracle_with_dataset(&opts, &dataset_path)
             .await
             .expect("run_oracle");
@@ -511,7 +510,7 @@ mod network_tests {
         let tmp = tempfile::tempdir().unwrap();
         let dataset_path = write_fixture_dataset(tmp.path());
 
-        let opts = opts_for(server.uri());
+        let opts = opts_for(server.uri(), tmp.path().to_path_buf());
         let err = run_oracle_with_dataset(&opts, &dataset_path)
             .await
             .unwrap_err();
@@ -536,7 +535,7 @@ mod network_tests {
 
         let tmp = tempfile::tempdir().unwrap();
         let dataset_path = write_fixture_dataset(tmp.path());
-        let opts = opts_for(server.uri());
+        let opts = opts_for(server.uri(), tmp.path().to_path_buf());
         let report = run_oracle_with_dataset(&opts, &dataset_path).await.unwrap();
         // "Answer-" は fixture answer (e.g. "Answer-single-session-user-3") の
         // prefix だが、"Answer-something-relevant" 全体は specific answer

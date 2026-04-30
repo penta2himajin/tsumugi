@@ -50,15 +50,26 @@ GGUF_PATH="$(find "${HF_HUB_CACHE}/${QWEN_REPO_DIR_NAME}/snapshots" \
 # Qwen3.5 系は thinking mode をデフォルトで有効にしており、出力の
 # `<think>...</think>` 部分が llama-server の `--reasoning-format auto`
 # (default) で `reasoning_content` フィールドに分離される。max_tokens 内
-# に answer に到達せず終了するケースを避けるため、`enable_thinking=false`
-# を chat template に渡して thinking 自体を無効化する。
+# に answer に到達せず終了するケースを避けるため、thinking 自体を無効化する。
+#
+# llama.cpp `b8972` 時点で `--chat-template-kwargs '{"enable_thinking":
+# false}'` は deprecated 警告を出すように変更され、`--reasoning off` が
+# 正規の指定方法になった。古い build と新しい build の両方で動くよう、
+# まず `--reasoning off` を試し、helpの出力に存在しなければ deprecated な
+# `--chat-template-kwargs` にフォールバックする。
 # (Qwen3.5 公式: `/no_think` directive は **サポート外**、API 側で
-#  `chat_template_kwargs` を渡すのが正規のやり方)
+#  thinking を切るのが正規のやり方)
+THINKING_OFF_ARGS=()
+if "${LLAMA_BIN}" --help 2>&1 | grep -qE -- '--reasoning '; then
+  THINKING_OFF_ARGS=(--reasoning off)
+else
+  THINKING_OFF_ARGS=(--chat-template-kwargs '{"enable_thinking":false}')
+fi
 COMMON_ARGS=(
   --port "${PORT}"
   --ctx-size "${CTX_SIZE}"
   --threads "${THREADS}"
-  --chat-template-kwargs '{"enable_thinking":false}'
+  "${THINKING_OFF_ARGS[@]}"
 )
 
 echo "  LD_LIBRARY_PATH=${LD_LIBRARY_PATH}"
