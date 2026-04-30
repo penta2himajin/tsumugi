@@ -82,6 +82,24 @@
 
 ---
 
+## Encoder-only LLM-free スタック (Phase 4-γ)
+
+### microsoft/llmlingua-2-bert-base-multilingual-cased-meetingbank (PromptCompressor)
+
+- HF: `microsoft/llmlingua-2-bert-base-multilingual-cased-meetingbank`
+- ONNX: HF Hub にネイティブ ONNX 配布なし。CI 内で `optimum-cli export onnx`
+  経由で都度 export し、`~/.cache/tsumugi/llmlingua2-mbert/` に出力する
+  (`benches/scripts/download_llmlingua2.sh`)。export 結果は actions/cache
+  でキャッシュ。
+- License: **Apache-2.0** (HF model card で確認、上流訓練データ MeetingBank
+  は CC BY-NC-ND 4.0 だが Microsoft が weights を Apache-2.0 で再配布)
+- 備考: 110M params (mBERT-base 多言語)。per-token binary classifier
+  (keep / discard)。CPU で ~0.8-1.5 s / 10K-tok prompt。tsumugi はデータ
+  セット (MeetingBank) を再配布せず、Microsoft 発行の weights のみ HF
+  経由で取得して export する。詳細は `docs/llm-free-stack-plan.md` § 8.2。
+
+---
+
 ## ランタイム / バイナリ
 
 ### llama.cpp

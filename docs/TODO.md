@@ -118,7 +118,7 @@
 
 実装順序 (各 1 PR):
 
-- [x] **`ort` 統合 + `OnnxEmbedding` 本実装** (PR、2026-04-30):
+- [x] **`ort` 統合 + `OnnxEmbedding` 本実装** (PR #32、2026-04-30):
       `tsumugi-core` の `onnx` feature に ort 2.0.0-rc.10 + tokenizers 0.21
       + ndarray 0.16 を追加。`OnnxEmbedding` は lazy session init
       (`tokio::sync::OnceCell` + `spawn_blocking`)、mean pool over
@@ -130,7 +130,20 @@
       フォールバック。`resolve_e5_paths.sh` で HF cache から path を
       抽出して `$GITHUB_ENV` に投入、`bench.yml` は `--features network,onnx`
       でビルド
-- [ ] LLMLingua-2-mBERT 実装 (`PromptCompressor`)
+- [x] **LLMLingua-2-mBERT 実装** (PR、2026-04-30):
+      旧 `LlmLinguaCompressor` (LLM 委譲版、命名が誤解を招く) を
+      `LlmDelegationCompressor` にリネーム。新 `LlmLingua2Compressor` を
+      `onnx` feature 配下で追加: per-token binary classifier (keep / discard)、
+      softmax + threshold + suffix force-keep。`preserve_tail_tokens` 分の
+      whitespace トークンは subword 単位で逆走査して force-keep にマップ
+      (`##` continuation 判定で BERT WordPiece 規約に従う)。benches では
+      新 helper `tier_0_1_2_compress` が `TSUMUGI_LLMLINGUA2_MODEL_PATH` /
+      `TSUMUGI_LLMLINGUA2_TOKENIZER_PATH` 両方設定時に LlmLingua2、未設定時
+      は `truncate_compress` にフォールバック。3 adapter (LongMemEval /
+      MemoryAgentBench / RULER) の tier-0-1-2 経路をすべて切替済。CI 側は
+      `download_llmlingua2.sh` が optimum-cli で safetensors → ONNX export
+      し env 出力 (HF にネイティブ ONNX 配布がないため)、export 結果は
+      `actions/cache` で永続化
 - [ ] SetFit + MiniLM 実装 (`QueryClassifier`)
 - [ ] GLiNER2 実装 (`EventDetector`)
 - [ ] DistilBART 実装 (`Summarizer`)
@@ -195,4 +208,4 @@
 
 ---
 
-*最終更新: 2026-04-30 (Phase 4-γ Step 1 完了で更新)*
+*最終更新: 2026-04-30 (Phase 4-γ Step 2 完了で更新)*

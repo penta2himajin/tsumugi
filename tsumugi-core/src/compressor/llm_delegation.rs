@@ -1,27 +1,28 @@
-//! LlmLinguaCompressor — LLM-delegated approximation of LLMLingua-2.
+//! LlmDelegationCompressor — generic LLM-delegated prompt compression.
 //!
-//! Real LLMLingua-2 (Pan et al., 2024) uses a fine-tuned XLM-RoBERTa classifier
-//! to predict per-token keep/discard labels. That requires a Rust ML runtime
-//! (ort / candle / tch-rs), which is out of scope for Phase 2 — the Cargo
-//! target graph stays minimal and CI doesn't need accelerators.
+//! Renders a budget-aware instruction template against an `LLMProvider` and
+//! returns whatever the model produces. Useful when you want compression
+//! quality on par with whatever auto-regressive model is already available
+//! to the application (Qwen / Llama / Claude / GPT) but do not want to
+//! ship encoder weights or pay for a dedicated `LLMLingua-2` ONNX runtime.
 //!
-//! This implementation delegates the compression decision to an `LLMProvider`
-//! with an explicit instruction to preserve named entities and factual claims
-//! while trimming filler. It is NOT paper-exact in compression ratio or token
-//! fidelity; it's a pragmatic middleware implementation that swaps 1:1 with
-//! the future ML-backed version when that lands in Phase 3+.
+//! NOT paper-exact LLMLingua-2 (Pan et al., 2024). For the real per-token
+//! classifier implementation see `LlmLingua2Compressor` (gated on the
+//! `onnx` feature). This file historically lived as `LlmLinguaCompressor`;
+//! it was renamed in Phase 4-γ Step 2 to make the architectural boundary
+//! between LLM-delegated and encoder-only paths explicit.
 
 use crate::traits::compressor::{CompressionHint, PromptCompressor};
 use crate::traits::llm::{CompletionRequest, LLMProvider};
 use async_trait::async_trait;
 use std::sync::Arc;
 
-pub struct LlmLinguaCompressor {
+pub struct LlmDelegationCompressor {
     provider: Arc<dyn LLMProvider>,
     instruction_template: String,
 }
 
-impl LlmLinguaCompressor {
+impl LlmDelegationCompressor {
     pub fn new(provider: Arc<dyn LLMProvider>) -> Self {
         Self {
             provider,
@@ -46,7 +47,7 @@ impl LlmLinguaCompressor {
 }
 
 #[async_trait]
-impl PromptCompressor for LlmLinguaCompressor {
+impl PromptCompressor for LlmDelegationCompressor {
     async fn compress(&self, prompt: &str, hint: CompressionHint) -> anyhow::Result<String> {
         // Cheap guard — if the prompt already fits, skip the round-trip.
         if prompt.split_whitespace().count() <= hint.target_budget_tokens as usize {
@@ -75,7 +76,7 @@ mod tests {
     #[tokio::test]
     async fn under_budget_is_noop() {
         let llm: Arc<dyn LLMProvider> = Arc::new(MockLLMProvider::new("[COMP]"));
-        let c = LlmLinguaCompressor::new(llm);
+        let c = LlmDelegationCompressor::new(llm);
         let out = c
             .compress("one two three", CompressionHint::new(10, 2))
             .await
@@ -86,7 +87,7 @@ mod tests {
     #[tokio::test]
     async fn over_budget_delegates_to_llm() {
         let llm: Arc<dyn LLMProvider> = Arc::new(MockLLMProvider::new("[COMP]"));
-        let c = LlmLinguaCompressor::new(llm);
+        let c = LlmDelegationCompressor::new(llm);
         let long_prompt = (1..=30)
             .map(|i| i.to_string())
             .collect::<Vec<_>>()

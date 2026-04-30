@@ -12,8 +12,12 @@
 //!   と `TSUMUGI_E5_TOKENIZER_PATH` の両方が設定されている場合は
 //!   OnnxEmbedding (multilingual-e5-small ONNX) に切り替える。
 //!   Phase 4-γ Step 1 で導入。
-//! - tier-0-1-2 の compressor は `TruncateCompressor` (head + tail tokens
-//!   with ellipsis、LLM 不使用)。`LlmLinguaCompressor` は LLM 委譲版で
+//! - tier-0-1-2 の compressor は default で `TruncateCompressor` (head +
+//!   tail tokens with ellipsis、LLM 不使用)。`onnx` feature 有効 +
+//!   `TSUMUGI_LLMLINGUA2_MODEL_PATH` / `TSUMUGI_LLMLINGUA2_TOKENIZER_PATH`
+//!   の両方が設定されていれば `LlmLingua2Compressor` (per-token classifier、
+//!   paper-faithful、LLM 不使用) に切り替わる。Phase 4-γ Step 2 で導入。
+//!   `LlmDelegationCompressor` (旧 `LlmLinguaCompressor`) は LLM 委譲版で
 //!   ablation の "LLM 不使用 baseline" 軸を破壊するため不採用。
 //!
 //! 詳細は `docs/ci-benchmark-integration-plan.md` §「Tier 別 ablation の分離」。
@@ -82,6 +86,8 @@ mod retrieve {
     use std::collections::HashMap;
     use std::sync::Arc;
 
+    #[cfg(feature = "onnx")]
+    use tsumugi_core::compressor::LlmLingua2Compressor;
     use tsumugi_core::compressor::TruncateCompressor;
     use tsumugi_core::domain::ChunkId;
     use tsumugi_core::providers::MockEmbedding;
@@ -182,7 +188,8 @@ mod retrieve {
 
     /// `TruncateCompressor` でテキストを `budget_tokens` (whitespace token
     /// count) に切り詰める。`preserve_tail_tokens` 分は末尾を保持する
-    /// (head + " … " + tail の形)。tier-0-1-2 ablation 専用。
+    /// (head + " … " + tail の形)。tier-0-1-2 ablation の deterministic
+    /// fallback として常に利用可能、ユニットテストでも直接呼ばれる。
     pub async fn truncate_compress(
         text: &str,
         budget_tokens: u32,
@@ -191,10 +198,40 @@ mod retrieve {
         let hint = CompressionHint::new(budget_tokens, preserve_tail_tokens);
         TruncateCompressor.compress(text, hint).await
     }
+
+    /// tier-0-1-2 ablation 用の compressor 切替えポイント。
+    ///
+    /// `onnx` feature 有効かつ `TSUMUGI_LLMLINGUA2_MODEL_PATH` /
+    /// `TSUMUGI_LLMLINGUA2_TOKENIZER_PATH` が両方設定されている場合は
+    /// `LlmLingua2Compressor` (per-token classifier、110M mBERT-base) を
+    /// 使う。それ以外は `truncate_compress` にフォールバック。
+    /// `keep_class_index` は `TSUMUGI_LLMLINGUA2_KEEP_CLASS` env (0|1) で
+    /// override 可、default は 1 (paper の preserve label)。
+    pub async fn tier_0_1_2_compress(
+        text: &str,
+        budget_tokens: u32,
+        preserve_tail_tokens: u32,
+    ) -> anyhow::Result<String> {
+        #[cfg(feature = "onnx")]
+        {
+            let model = std::env::var("TSUMUGI_LLMLINGUA2_MODEL_PATH").ok();
+            let tokenizer = std::env::var("TSUMUGI_LLMLINGUA2_TOKENIZER_PATH").ok();
+            if let (Some(m), Some(t)) = (model, tokenizer) {
+                let keep_idx = std::env::var("TSUMUGI_LLMLINGUA2_KEEP_CLASS")
+                    .ok()
+                    .and_then(|s| s.parse::<usize>().ok())
+                    .unwrap_or(1);
+                let compressor = LlmLingua2Compressor::new(m, t).with_keep_class_index(keep_idx);
+                let hint = CompressionHint::new(budget_tokens, preserve_tail_tokens);
+                return compressor.compress(text, hint).await;
+            }
+        }
+        truncate_compress(text, budget_tokens, preserve_tail_tokens).await
+    }
 }
 
 #[cfg(feature = "network")]
-pub use retrieve::{bm25_retrieve, hybrid_retrieve, truncate_compress};
+pub use retrieve::{bm25_retrieve, hybrid_retrieve, tier_0_1_2_compress};
 
 #[cfg(test)]
 mod tests {
@@ -256,6 +293,9 @@ mod tests {
 #[cfg(all(test, feature = "network"))]
 mod retrieve_tests {
     use super::*;
+    // truncate_compress は tier-0-1-2 fallback 専用なので pub use 経由では
+    // export していない。テストでは inner mod から直接参照する。
+    use super::retrieve::truncate_compress;
 
     #[tokio::test]
     async fn bm25_retrieve_returns_hits_for_keyword() {
