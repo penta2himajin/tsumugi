@@ -72,8 +72,10 @@ jobs:
     # (実機 smoke #2 で 58min 経過後 cancel)。oracle / all suite で
     # マージンを確保するため 150min。tier-0 / tier-0-1 / tier-0-1-2 は
     # LLM 不使用 (BM25 / cosine / TruncateCompressor のみ) で per case
-    # <1s だが、4 ablation × N case の累積と HybridRetriever の MockEmbedding
-    # pre-compute で総時間の上振れリスクがある。health smoke は数分で済む。
+    # <1s だが、4 ablation × N case の累積と HybridRetriever の embedding
+    # pre-compute (Phase 4-γ Step 1 以降は OnnxEmbedding e5-small 384-dim、
+    # CPU で 10-50ms/chunk) で総時間の上振れリスクがある。health smoke は
+    # 数分で済む。
     timeout-minutes: 150
     steps:
       - uses: actions/checkout@v4
@@ -107,8 +109,18 @@ jobs:
         # で download cost は無視可能、suite 別の条件分岐は workflow 側で行う。
         run: ./benches/scripts/download_datasets.sh
 
-      - name: Build runner with network feature
-        run: cargo build --release -p tsumugi-bench --features network
+      - name: Resolve multilingual-e5-small paths
+        # Phase 4-γ Step 1: HF cache から e5-small の ONNX / tokenizer
+        # ファイルパスを取り出して $GITHUB_ENV に流し込む。bench runner は
+        # `TSUMUGI_E5_MODEL_PATH` / `TSUMUGI_E5_TOKENIZER_PATH` が両方
+        # 設定されていれば tier-0-1 を OnnxEmbedding に切り替える。
+        run: ./benches/scripts/resolve_e5_paths.sh >> "$GITHUB_ENV"
+
+      - name: Build runner with network + onnx features
+        # `onnx` feature 有効時は ort 2.x が ONNX Runtime バイナリを
+        # ダウンロードする (download-binaries feature)。CI runner で
+        # 数百 MB の追加 download。
+        run: cargo build --release -p tsumugi-bench --features "network,onnx"
 
       - name: Start llama-server
         run: nohup ./benches/scripts/start_llama_server.sh > llama-server.log 2>&1 &

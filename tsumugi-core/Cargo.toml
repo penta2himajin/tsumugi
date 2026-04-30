@@ -15,9 +15,10 @@ network = ["dep:reqwest"]
 # Enable sqlx + SQLite persistence (`SqliteStorage`).
 sqlite = ["dep:sqlx"]
 # Enable ONNX-backed embedding provider (`OnnxEmbedding`).
-# Phase 4-α Step 1 では trait 面のみ先行追加 (実 ort 統合は並行作業)。
-# 詳細は `docs/ci-benchmark-integration-plan.md` 参照。
-onnx = []
+# Phase 4-γ Step 1 で ort + tokenizers 統合済み。multilingual-e5-small
+# 想定だが、constructor で任意 BERT/XLM-R 系 ONNX weights を渡せる。
+# 詳細は `docs/llm-free-stack-plan.md` § 5.2 (1)。
+onnx = ["dep:ort", "dep:tokenizers", "dep:ndarray", "dep:tokio"]
 
 [dependencies]
 anyhow.workspace = true
@@ -32,6 +33,11 @@ uuid.workspace = true
 
 reqwest = { workspace = true, optional = true }
 sqlx = { workspace = true, optional = true }
+# `onnx` feature only — keep heavy ML deps gated.
+ort = { version = "=2.0.0-rc.10", default-features = false, features = ["std", "ndarray", "download-binaries"], optional = true }
+tokenizers = { version = "0.21", default-features = false, features = ["onig"], optional = true }
+ndarray = { version = "0.16", optional = true }
+tokio = { workspace = true, optional = true, features = ["sync"] }
 
 [dev-dependencies]
 tokio.workspace = true

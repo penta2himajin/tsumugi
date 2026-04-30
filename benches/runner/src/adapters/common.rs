@@ -7,8 +7,11 @@
 //! - tier-0 / tier-0-1 / tier-0-1-2 ablation は **LLM 不使用**。
 //!   retrieval / compression のみで判定する。これらの ablation で使う
 //!   helper を 1 ファイルに集めた。
-//! - tier-0-1 の embedding は MockEmbedding (FNV-1a 64-dim、deterministic)
-//!   で代用。multilingual-e5-small ONNX 統合は Phase 4-α Step 4 以降。
+//! - tier-0-1 の embedding は default で MockEmbedding (FNV-1a 64-dim、
+//!   deterministic) を使い、`onnx` feature 有効 + `TSUMUGI_E5_MODEL_PATH`
+//!   と `TSUMUGI_E5_TOKENIZER_PATH` の両方が設定されている場合は
+//!   OnnxEmbedding (multilingual-e5-small ONNX) に切り替える。
+//!   Phase 4-γ Step 1 で導入。
 //! - tier-0-1-2 の compressor は `TruncateCompressor` (head + tail tokens
 //!   with ellipsis、LLM 不使用)。`LlmLinguaCompressor` は LLM 委譲版で
 //!   ablation の "LLM 不使用 baseline" 軸を破壊するため不採用。
@@ -82,6 +85,8 @@ mod retrieve {
     use tsumugi_core::compressor::TruncateCompressor;
     use tsumugi_core::domain::ChunkId;
     use tsumugi_core::providers::MockEmbedding;
+    #[cfg(feature = "onnx")]
+    use tsumugi_core::providers::OnnxEmbedding;
     use tsumugi_core::retriever::{Bm25Retriever, CosineRetriever, HybridRetriever};
     use tsumugi_core::traits::compressor::{CompressionHint, PromptCompressor};
     use tsumugi_core::traits::embedding::{EmbeddingProvider, EmbeddingVector};
@@ -91,6 +96,35 @@ mod retrieve {
     /// 振るので、低次元すぎると衝突で cosine が BM25 と区別つかなくなる。
     /// 64 は MockEmbedding の Default、ablation 効果検出には十分な検出力。
     const MOCK_EMBEDDING_DIM: usize = 64;
+
+    /// OnnxEmbedding を使う場合の default 次元 (multilingual-e5-small)。
+    /// `TSUMUGI_E5_DIM` env で override 可。
+    #[cfg(feature = "onnx")]
+    const DEFAULT_E5_DIM: usize = 384;
+
+    /// `TSUMUGI_E5_MODEL_PATH` と `TSUMUGI_E5_TOKENIZER_PATH` の両方が
+    /// 設定されている場合のみ OnnxEmbedding を返す。それ以外 (env 未設定
+    /// または `onnx` feature 無効) は MockEmbedding に fallback する。
+    /// 実 embedding は L2-normalize 済みの 384-dim (default)、Mock は 64-dim。
+    fn make_embedding_provider() -> Arc<dyn EmbeddingProvider> {
+        #[cfg(feature = "onnx")]
+        {
+            let model = std::env::var("TSUMUGI_E5_MODEL_PATH").ok();
+            let tokenizer = std::env::var("TSUMUGI_E5_TOKENIZER_PATH").ok();
+            if let (Some(m), Some(t)) = (model, tokenizer) {
+                let dim = std::env::var("TSUMUGI_E5_DIM")
+                    .ok()
+                    .and_then(|s| s.parse::<usize>().ok())
+                    .unwrap_or(DEFAULT_E5_DIM);
+                // 単一プロバイダで passages / query 双方を embed するため
+                // prefix は空のまま。e5 の "passage: " / "query: " 区別を
+                // 完全に活かすには CosineRetriever 側で role を分ける改修
+                // が必要 (follow-up)。
+                return Arc::new(OnnxEmbedding::new(m, t, dim));
+            }
+        }
+        Arc::new(MockEmbedding::new(MOCK_EMBEDDING_DIM))
+    }
 
     /// BM25 retrieval を `chunks` に対して走らせ、上位 `top_k` chunk を
     /// テキストとして返す。空 corpus は空 Vec。
@@ -114,8 +148,10 @@ mod retrieve {
     }
 
     /// BM25 + cosine の HybridRetriever で chunks を検索する。embedding は
-    /// MockEmbedding (FNV-1a 64-dim、deterministic) を使用。Phase 4-α Step 4
-    /// 以降で OnnxEmbedding (multilingual-e5-small) に置換予定。
+    /// `onnx` feature 有効かつ `TSUMUGI_E5_MODEL_PATH` /
+    /// `TSUMUGI_E5_TOKENIZER_PATH` が設定されていれば OnnxEmbedding
+    /// (multilingual-e5-small)、それ以外は MockEmbedding (FNV-1a 64-dim、
+    /// deterministic) にフォールバック。
     pub async fn hybrid_retrieve(
         chunks: &[String],
         query: &str,
@@ -127,7 +163,7 @@ mod retrieve {
         let pairs: Vec<(ChunkId, String)> =
             chunks.iter().map(|c| (ChunkId::new(), c.clone())).collect();
         let lookup: HashMap<ChunkId, String> = pairs.iter().cloned().collect();
-        let provider: Arc<dyn EmbeddingProvider> = Arc::new(MockEmbedding::new(MOCK_EMBEDDING_DIM));
+        let provider: Arc<dyn EmbeddingProvider> = make_embedding_provider();
         // pre-compute embeddings (CosineRetriever は embed 済み corpus を要求)
         let mut embeddings: Vec<(ChunkId, EmbeddingVector)> = Vec::with_capacity(pairs.len());
         for (id, text) in &pairs {
