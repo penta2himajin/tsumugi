@@ -144,7 +144,16 @@
       `download_llmlingua2.sh` が optimum-cli で safetensors → ONNX export
       し env 出力 (HF にネイティブ ONNX 配布がないため)、export 結果は
       `actions/cache` で永続化
-- [ ] SetFit + MiniLM 実装 (`QueryClassifier`)
+- [x] **SetFit + MiniLM 実装** (PR、2026-04-30):
+      `tsumugi-core/src/classifier/setfit_classifier.rs` 新設、
+      `SetFitClassifier` を `OnnxEmbedding` + `LinearHead` の compose で
+      実装。head は JSON 形式 (`labels` / `embedding_dim` / `weights` /
+      `bias`) でロード、argmax → label string → `QueryClass` 変換。
+      ラベルは case-insensitive で `{Literal, Narrative, Analytical,
+      Unknown}` にマッチ、未知は `with_default` で指定可能。訓練データ
+      生成はダウンストリーム責務 (汎用フレームワークに domain-specific
+      label を埋め込まない)。日本語クエリには `with_embedder` で
+      `paraphrase-multilingual-MiniLM-L12-v2` (~118M, 384-dim) に切替可
 - [ ] GLiNER2 実装 (`EventDetector`)
 - [ ] DistilBART 実装 (`Summarizer`)
 
@@ -208,4 +217,4 @@
 
 ---
 
-*最終更新: 2026-04-30 (Phase 4-γ Step 2 完了で更新)*
+*最終更新: 2026-04-30 (Phase 4-γ Step 3 完了で更新)*
