@@ -7,7 +7,6 @@ use serde::{Deserialize, Serialize};
 /// Mirrors `models/tsumugi/core.als` (`SummaryMethod`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum SummaryMethod {
-    LlmFull,
     LlmLingua2,
     SelectiveContext,
     ExtractiveBM25,

@@ -129,7 +129,7 @@ impl LlmLingua2Compressor {
         anyhow::bail!(
             "LlmLingua2Compressor::compress requires the `onnx` feature \
              (model_path = {:?}). Rebuild with `--features onnx` or use \
-             TruncateCompressor / LlmDelegationCompressor instead.",
+             TruncateCompressor instead.",
             self.model_path
         )
     }

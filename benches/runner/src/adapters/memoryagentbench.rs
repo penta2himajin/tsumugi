@@ -2,16 +2,17 @@
 //!
 //! Phase 4-α Step 3 PR ②: HF dataset `ai-hyz/MemoryAgentBench` の
 //! `Conflict_Resolution` split は **8 行 × 60-100 QA / 行**で、各行の
-//! `context` は 273k-3.17M chars (約 70K-800K tokens) と llama-server
-//! `--ctx-size 16384` を大きく超える。
+//! `context` は 273k-3.17M chars (約 70K-800K tokens) と一般的な
+//! BERT/encoder の context window を大きく超える。
 //!
 //! 計画書の「全 8 問」は **8 行 × `questions[0]` = 8 評価ケース** と解釈する。
 //!
 //! Context truncation 戦略: `tsumugi_core::retriever::Bm25Retriever` で
 //! chunk_size 1024 tok (≒ 4096 chars) / top_k 10 の retrieval を行い、
-//! ~10K tok 程度に圧縮した上で LLM に投げる。BM25 hit が `top_k/2` 未満
-//! になった場合は context 末尾 ~10K tok でフォールバック (CR の supersession
-//! 仮説と整合: 新しい事実は document 末尾近辺に集中する傾向)。
+//! ~10K tok 程度に圧縮する。BM25 hit が `top_k/2` 未満になった場合の
+//! fallback (末尾切り出し) は LLM 削除前の `full` ablation 用に書かれた
+//! ロジックなので、retrieval-only path には不要 (retrieved を空配列の
+//! まま judge して miss 扱いに)。
 //!
 //! 正解判定: `answers[i]` は `List[String]` の同義語候補。
 //! `substring_match_any` でいずれか 1 つに部分一致すれば correct。
@@ -20,23 +21,14 @@
 //! 環境変数 `MAB_CR_PATH` で override 可。`download_datasets.sh` が
 //! parquet → JSONL 変換 (pyarrow 経由) を担当する。
 
-use crate::report::SectionReport;
+use crate::adapters::common::{
+    bm25_retrieve, chunk_text, concat_for_judge, hybrid_retrieve, tier_0_1_2_compress,
+};
+use crate::metrics::{substring_match_any, CaseMetric};
+use crate::report::{IncrementalSectionWriter, SectionReport};
 use crate::suite::{Ablation, SuiteRunOptions};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
-
-#[cfg(feature = "network")]
-use crate::adapters::common::{
-    bm25_retrieve, chunk_text, concat_for_judge, hybrid_retrieve, tail_chars, tier_0_1_2_compress,
-};
-#[cfg(feature = "network")]
-use crate::metrics::{substring_match_any, CaseMetric};
-#[cfg(feature = "network")]
-use crate::report::IncrementalSectionWriter;
-#[cfg(feature = "network")]
-use tsumugi_core::providers::OpenAiCompatibleProvider;
-#[cfg(feature = "network")]
-use tsumugi_core::traits::llm::{CompletionRequest, LLMProvider};
 
 /// 1 chunk あたりのターゲット文字数。English ASCII で 4 chars/token と仮定し
 /// 1024 token を保守的に約 4096 chars にする。`CR_CHUNK_CHARS` env で override 可。
@@ -46,18 +38,15 @@ const DEFAULT_CHUNK_CHARS: usize = 4096;
 /// `CR_TOP_K` env で override 可。
 const DEFAULT_TOP_K: usize = 10;
 
-/// BM25 fallback (末尾切り出し) のサイズ。約 10K tokens。
-const DEFAULT_FALLBACK_TAIL_CHARS: usize = 40_000;
-
 /// 1 行あたりに評価する questions の数。default=1 で `questions[0]` のみ。
 /// `CR_QUESTIONS_PER_ROW` env で 1..N に拡張可能 (各 row × per_row case を生成)。
 const DEFAULT_QUESTIONS_PER_ROW: usize = 1;
 
-/// tier-0-1-2 の `TruncateCompressor` budget (whitespace tokens)。LLM 不使用
-/// ablation で retrieved chunks を圧縮した結果に対し substring match を取る。
+/// tier-0-1-2 の compressor budget (whitespace tokens)。retrieval の concat に
+/// 対して compress を掛けた結果に対し substring match を取る。
 /// `CR_COMPRESS_BUDGET_TOKENS` env で override 可。
 const DEFAULT_COMPRESS_BUDGET_TOKENS: u32 = 2048;
-/// `TruncateCompressor` の tail 保持 token 数 (head + " … " + tail のうち
+/// compressor の tail 保持 token 数 (head + " … " + tail のうち
 /// tail 側に残す最小 token 数)。
 const DEFAULT_COMPRESS_PRESERVE_TAIL: u32 = 256;
 
@@ -106,7 +95,6 @@ fn questions_per_row_from_env() -> usize {
         .unwrap_or(DEFAULT_QUESTIONS_PER_ROW)
 }
 
-#[cfg(feature = "network")]
 fn compress_budget_from_env() -> u32 {
     std::env::var("CR_COMPRESS_BUDGET_TOKENS")
         .ok()
@@ -115,26 +103,12 @@ fn compress_budget_from_env() -> u32 {
         .unwrap_or(DEFAULT_COMPRESS_BUDGET_TOKENS)
 }
 
-pub async fn run_conflict_resolution(opts: &SuiteRunOptions) -> anyhow::Result<SectionReport> {
-    // 後方互換: ablation 概念を露出しない既定 entry。`Suite::run` から
-    // 個別 ablation を回したい場合は `run_with_dataset_with_ablation` を直接使う。
-    let dataset_path = default_dataset_path();
-    run_with_dataset_with_ablation(opts, Ablation::Full, &dataset_path).await
+pub fn default_dataset_path() -> PathBuf {
+    std::env::var("MAB_CR_PATH")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("benches/data/memoryagentbench_cr.jsonl"))
 }
 
-#[cfg(not(feature = "network"))]
-pub async fn run_with_dataset_with_ablation(
-    _opts: &SuiteRunOptions,
-    _ablation: Ablation,
-    _path: &Path,
-) -> anyhow::Result<SectionReport> {
-    anyhow::bail!(
-        "Suite::Cr requires the `network` feature for the OpenAI-compatible \
-         LLM provider. Rebuild `tsumugi-bench` with `--features network`."
-    )
-}
-
-#[cfg(feature = "network")]
 pub async fn run_with_dataset_with_ablation(
     opts: &SuiteRunOptions,
     ablation: Ablation,
@@ -163,93 +137,11 @@ pub async fn run_with_dataset_with_ablation(
         top_k
     );
 
-    match ablation {
-        Ablation::Full => run_cr_full(opts, &cases, chunk_chars, top_k).await,
-        Ablation::Tier0 | Ablation::Tier01 | Ablation::Tier012 => {
-            run_cr_retrieval_only(opts, &cases, ablation, chunk_chars, top_k).await
-        }
-    }
+    run_cr_retrieval_only(opts, &cases, ablation, chunk_chars, top_k).await
 }
 
-#[cfg(feature = "network")]
-async fn run_cr_full(
-    opts: &SuiteRunOptions,
-    cases: &[CrCase],
-    chunk_chars: usize,
-    top_k: usize,
-) -> anyhow::Result<SectionReport> {
-    let provider = OpenAiCompatibleProvider::new(&opts.llm_base_url, &opts.llm_model);
-    let mut writer =
-        IncrementalSectionWriter::create(&opts.output_dir, "memoryagentbench-cr", Ablation::Full)?;
-    let total = cases.len();
-    for (idx, case) in cases.iter().enumerate() {
-        let chunks = chunk_text(&case.context, chunk_chars);
-        let retrieved = bm25_retrieve(&chunks, &case.question, top_k).await?;
-        let used_fallback = retrieved.len() < top_k.div_ceil(2);
-        let context_block = if used_fallback {
-            tail_chars(&case.context, DEFAULT_FALLBACK_TAIL_CHARS)
-        } else {
-            retrieved.join("\n\n---\n\n")
-        };
-        eprintln!(
-            "[cr/full] [{}/{}] case={} chunks={} hits={} ctx_chars={} fallback={} answers={:?}",
-            idx + 1,
-            total,
-            case.case_id,
-            chunks.len(),
-            retrieved.len(),
-            context_block.len(),
-            used_fallback,
-            case.answers
-        );
-        let prompt = build_prompt(&case.question, &context_block);
-        let request = CompletionRequest {
-            prompt,
-            max_tokens: Some(128),
-            temperature: Some(0.0),
-            grammar: None,
-            stop: None,
-        };
-        let started = std::time::Instant::now();
-        let resp = provider.complete(&request).await?;
-        let latency_ms = started.elapsed().as_millis() as u64;
-        let correct = substring_match_any(&resp.text, &case.answers)
-            || resp
-                .reasoning_text
-                .as_deref()
-                .is_some_and(|r| substring_match_any(r, &case.answers));
-        let response_preview: String = resp.text.chars().take(200).collect();
-        let reasoning_preview: String = resp
-            .reasoning_text
-            .as_deref()
-            .map(|r| r.chars().take(200).collect())
-            .unwrap_or_default();
-        eprintln!(
-            "[cr/full] [{}/{}] -> latency={}ms correct={} prompt_tokens={:?} completion_tokens={:?} response={:?} reasoning={:?}",
-            idx + 1,
-            total,
-            latency_ms,
-            correct,
-            resp.prompt_tokens,
-            resp.completion_tokens,
-            response_preview,
-            reasoning_preview
-        );
-        writer.write_case(CaseMetric::for_full(
-            case.case_id.clone(),
-            correct,
-            latency_ms,
-            resp.prompt_tokens,
-            resp.completion_tokens,
-        ))?;
-    }
-    Ok(writer.finish())
-}
-
-/// LLM 不使用 ablation (tier-0 / tier-0-1 / tier-0-1-2) の共通 path。
-/// retrieval (BM25 / Hybrid) のみで判定し、tier-0-1-2 では retrieval 結果に
-/// `TruncateCompressor` を適用する。
-#[cfg(feature = "network")]
+/// 全 ablation 共通 path。retrieval (BM25 / Hybrid) のみで判定し、
+/// tier-0-1-2 では retrieval 結果に compressor を適用する。
 async fn run_cr_retrieval_only(
     opts: &SuiteRunOptions,
     cases: &[CrCase],
@@ -257,10 +149,6 @@ async fn run_cr_retrieval_only(
     chunk_chars: usize,
     top_k: usize,
 ) -> anyhow::Result<SectionReport> {
-    debug_assert!(matches!(
-        ablation,
-        Ablation::Tier0 | Ablation::Tier01 | Ablation::Tier012
-    ));
     let mut writer =
         IncrementalSectionWriter::create(&opts.output_dir, "memoryagentbench-cr", ablation)?;
     let budget = compress_budget_from_env();
@@ -273,7 +161,6 @@ async fn run_cr_retrieval_only(
             Ablation::Tier01 | Ablation::Tier012 => {
                 hybrid_retrieve(&chunks, &case.question, top_k).await?
             }
-            Ablation::Full => unreachable!("guarded by debug_assert above"),
         };
         let concat = concat_for_judge(&retrieved);
         let retrieval_chars = concat.chars().count();
@@ -313,12 +200,6 @@ async fn run_cr_retrieval_only(
         })?;
     }
     Ok(writer.finish())
-}
-
-pub fn default_dataset_path() -> PathBuf {
-    std::env::var("MAB_CR_PATH")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("benches/data/memoryagentbench_cr.jsonl"))
 }
 
 fn load_entries(path: &Path) -> anyhow::Result<Vec<Entry>> {
@@ -366,20 +247,6 @@ fn build_cases(entries: &[Entry], per_row: usize) -> Vec<CrCase> {
     cases
 }
 
-fn build_prompt(question: &str, context_block: &str) -> String {
-    format!(
-        "You are reading excerpts from a long document. Some statements in \
-         the document may CONFLICT with each other; in that case, the LATER \
-         (more recent) statement supersedes the earlier one. Use the \
-         most up-to-date information to answer.\n\n\
-         === DOCUMENT EXCERPTS ===\n{}\n=== END EXCERPTS ===\n\n\
-         Question: {}\n\
-         Answer concisely with only the answer (no explanation).\n\
-         Final answer:",
-        context_block, question
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -405,6 +272,15 @@ mod tests {
             "answers": ans,
             "metadata": {}
         })
+    }
+
+    fn opts_for(output_dir: PathBuf) -> SuiteRunOptions {
+        SuiteRunOptions {
+            suite: crate::suite::Suite::Cr,
+            output_dir,
+            ablations: Ablation::default_set(),
+            help: false,
+        }
     }
 
     #[test]
@@ -492,45 +368,22 @@ mod tests {
     }
 
     #[test]
-    fn build_prompt_includes_supersession_directive_and_question() {
-        let p = build_prompt("Who is X?", "doc body here");
-        // CR タスクに必須の supersession 指示が prompt に含まれること
-        assert!(
-            p.contains("CONFLICT"),
-            "prompt missing CONFLICT directive: {p}"
-        );
-        assert!(
-            p.contains("LATER") && p.contains("supersedes"),
-            "prompt missing supersession directive: {p}"
-        );
-        assert!(p.contains("most up-to-date"));
-        assert!(p.contains("Who is X?"));
-        assert!(p.contains("doc body here"));
-        assert!(p.contains("Final answer:"));
-    }
-
-    #[test]
     fn questions_per_row_from_env_falls_back_to_default() {
         std::env::remove_var("CR_QUESTIONS_PER_ROW");
         assert_eq!(questions_per_row_from_env(), 1);
     }
-}
-
-#[cfg(all(test, feature = "network"))]
-mod network_tests {
-    use super::*;
-    use crate::suite::Suite;
-    use std::io::Write;
-    use wiremock::matchers::{method, path};
-    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     fn write_fixture_dataset(dir: &Path, rows: usize) -> PathBuf {
         let path = dir.join("cr.jsonl");
         let mut f = std::fs::File::create(&path).unwrap();
         for i in 0..rows {
+            // context に answer を埋め込み、retrieval で hit するようにする
             let entry = serde_json::json!({
-                "context": format!("Document {} body. Some statement A. Some statement B.", i),
-                "questions": [format!("What about row {}?", i)],
+                "context": format!(
+                    "Document {} body. Some statement A. Some statement B. ANSWER-row{} appears here.",
+                    i, i
+                ),
+                "questions": [format!("What is the special token for row {}?", i)],
                 "answers": [[format!("ANSWER-row{}", i)]],
                 "metadata": {}
             });
@@ -540,109 +393,11 @@ mod network_tests {
         path
     }
 
-    fn opts_for(server_uri: String, output_dir: PathBuf) -> SuiteRunOptions {
-        SuiteRunOptions {
-            suite: Suite::Cr,
-            output_dir,
-            llm_base_url: server_uri,
-            llm_model: "qwen3.5-4b".into(),
-            ablations: crate::suite::Ablation::default_set(),
-            help: false,
-        }
-    }
-
     #[tokio::test]
-    async fn cr_runs_8_cases_and_marks_correctness() {
-        let server = MockServer::start().await;
-        // 全 case の正解 "ANSWER-row{i}" を含む応答を返す mock。
-        // ただし 1 つだけ含めるので、その row の case は correct=true、他は false。
-        Mock::given(method("POST"))
-            .and(path("/v1/chat/completions"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "choices": [{
-                    "message": {
-                        "role": "assistant",
-                        "content": "Final answer: ANSWER-row3 (the most up-to-date)"
-                    }
-                }],
-                "usage": { "prompt_tokens": 1000, "completion_tokens": 12 }
-            })))
-            .mount(&server)
-            .await;
-
+    async fn cr_tier0_judges_via_retrieval() {
         let tmp = tempfile::tempdir().unwrap();
-        let dataset = write_fixture_dataset(tmp.path(), 8);
-        let opts = opts_for(server.uri(), tmp.path().to_path_buf());
-        let report = run_with_dataset_with_ablation(&opts, Ablation::Full, &dataset)
-            .await
-            .expect("run");
-
-        assert_eq!(report.bench, "memoryagentbench-cr");
-        assert_eq!(report.ablation, "full");
-        assert_eq!(report.cases.len(), 8);
-        // row3 のみ correct=true
-        let correct_ids: Vec<&str> = report
-            .cases
-            .iter()
-            .filter(|c| c.correct)
-            .map(|c| c.case_id.as_str())
-            .collect();
-        assert_eq!(correct_ids, vec!["cr-row3-q0"]);
-    }
-
-    #[tokio::test]
-    async fn cr_propagates_provider_error() {
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/v1/chat/completions"))
-            .respond_with(ResponseTemplate::new(500))
-            .mount(&server)
-            .await;
-        let tmp = tempfile::tempdir().unwrap();
-        let dataset = write_fixture_dataset(tmp.path(), 2);
-        let opts = opts_for(server.uri(), tmp.path().to_path_buf());
-        let err = run_with_dataset_with_ablation(&opts, Ablation::Full, &dataset)
-            .await
-            .unwrap_err();
-        assert!(err.to_string().contains("500"), "got: {err}");
-    }
-
-    #[tokio::test]
-    async fn cr_tier0_uses_no_llm_and_judges_via_retrieval() {
-        // tier-0 では LLM を一切呼ばないので、mock server に POST が来ないこと
-        // を assertion で固める。answer 文字列 (`ANSWER-row{i}`) は context
-        // 内に埋め込まれており、BM25 で retrieve できれば correct=true。
-        let server = MockServer::start().await;
-        // どの POST に対しても 500 を返すモック (本来呼ばれない)
-        Mock::given(method("POST"))
-            .and(path("/v1/chat/completions"))
-            .respond_with(ResponseTemplate::new(500))
-            .mount(&server)
-            .await;
-
-        let tmp = tempfile::tempdir().unwrap();
-        // fixture context 内に "ANSWER-row{i}" を含めた jsonl を作る
-        let dataset = {
-            let path = tmp.path().join("cr.jsonl");
-            let mut f = std::fs::File::create(&path).unwrap();
-            for i in 0..3 {
-                let entry = serde_json::json!({
-                    "context": format!(
-                        "Document {} body. Some statement A. Some statement B. ANSWER-row{} appears here.",
-                        i, i
-                    ),
-                    "questions": [format!("What is the special token for row {}?", i)],
-                    "answers": [[format!("ANSWER-row{}", i)]],
-                    "metadata": {}
-                });
-                use std::io::Write as _;
-                f.write_all(entry.to_string().as_bytes()).unwrap();
-                f.write_all(b"\n").unwrap();
-            }
-            path
-        };
-        let opts = opts_for(server.uri(), tmp.path().to_path_buf());
-
+        let dataset = write_fixture_dataset(tmp.path(), 3);
+        let opts = opts_for(tmp.path().to_path_buf());
         let report = run_with_dataset_with_ablation(&opts, Ablation::Tier0, &dataset)
             .await
             .expect("tier-0 run");
@@ -658,7 +413,6 @@ mod network_tests {
             "all retrieval-only cases should match: {:?}",
             report.cases
         );
-        // retrieval-side metrics が記録されていること
         for c in &report.cases {
             assert!(c.retrieval_latency_ms.is_some());
             assert!(c.retrieved_chunks.is_some());
@@ -667,26 +421,13 @@ mod network_tests {
             assert!(c.prompt_tokens.is_none());
             assert!(c.completion_tokens.is_none());
         }
-        // LLM が呼ばれていないこと
-        let received = server.received_requests().await.unwrap_or_default();
-        assert!(
-            received.is_empty(),
-            "tier-0 must not call LLM, got {} requests",
-            received.len()
-        );
     }
 
     #[tokio::test]
-    async fn cr_tier01_uses_hybrid_retrieval_and_no_llm() {
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/v1/chat/completions"))
-            .respond_with(ResponseTemplate::new(500))
-            .mount(&server)
-            .await;
+    async fn cr_tier01_uses_hybrid_retrieval() {
         let tmp = tempfile::tempdir().unwrap();
         let dataset = write_fixture_dataset(tmp.path(), 2);
-        let opts = opts_for(server.uri(), tmp.path().to_path_buf());
+        let opts = opts_for(tmp.path().to_path_buf());
         let report = run_with_dataset_with_ablation(&opts, Ablation::Tier01, &dataset)
             .await
             .expect("tier-0-1 run");
@@ -696,18 +437,10 @@ mod network_tests {
             assert!(c.compressed_chars.is_none(), "tier-0-1 should not compress");
             assert!(c.retrieved_chunks.is_some());
         }
-        let received = server.received_requests().await.unwrap_or_default();
-        assert!(received.is_empty(), "tier-0-1 must not call LLM");
     }
 
     #[tokio::test]
-    async fn cr_tier012_applies_truncate_compressor() {
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/v1/chat/completions"))
-            .respond_with(ResponseTemplate::new(500))
-            .mount(&server)
-            .await;
+    async fn cr_tier012_applies_compressor() {
         let tmp = tempfile::tempdir().unwrap();
         // 長めの fixture を作って圧縮効果を観測
         let dataset = {
@@ -721,13 +454,12 @@ mod network_tests {
                     "answers": [[format!("ANSWER-row{}", i)]],
                     "metadata": {}
                 });
-                use std::io::Write as _;
                 f.write_all(entry.to_string().as_bytes()).unwrap();
                 f.write_all(b"\n").unwrap();
             }
             path
         };
-        let opts = opts_for(server.uri(), tmp.path().to_path_buf());
+        let opts = opts_for(tmp.path().to_path_buf());
         // 小さい budget で圧縮効果を強制
         std::env::set_var("CR_COMPRESS_BUDGET_TOKENS", "32");
         let report = run_with_dataset_with_ablation(&opts, Ablation::Tier012, &dataset)
@@ -746,31 +478,19 @@ mod network_tests {
             let after = c.compressed_chars.unwrap();
             assert!(after <= before, "compressed {after} > original {before}");
         }
-        let received = server.received_requests().await.unwrap_or_default();
-        assert!(received.is_empty(), "tier-0-1-2 must not call LLM");
     }
 
     #[tokio::test]
     async fn cr_emits_jsonl_incrementally_for_timeout_safety() {
-        // case 1 完了後 (case 2 で server が止まる前) でも jsonl が
-        // disk に残ること。IncrementalSectionWriter の per-case fsync 効果を
-        // CR adapter 経由でも確認する。
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/v1/chat/completions"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "choices": [{ "message": { "role": "assistant", "content": "ok" } }],
-                "usage": { "prompt_tokens": 100, "completion_tokens": 1 }
-            })))
-            .mount(&server)
-            .await;
+        // case 完了ごとに jsonl が disk に残ること。IncrementalSectionWriter
+        // の per-case fsync 効果を CR adapter 経由でも確認する。
         let tmp = tempfile::tempdir().unwrap();
         let dataset = write_fixture_dataset(tmp.path(), 3);
-        let opts = opts_for(server.uri(), tmp.path().to_path_buf());
-        run_with_dataset_with_ablation(&opts, Ablation::Full, &dataset)
+        let opts = opts_for(tmp.path().to_path_buf());
+        run_with_dataset_with_ablation(&opts, Ablation::Tier0, &dataset)
             .await
             .unwrap();
-        let jsonl_path = tmp.path().join("memoryagentbench-cr/full.jsonl");
+        let jsonl_path = tmp.path().join("memoryagentbench-cr/tier-0.jsonl");
         let content = std::fs::read_to_string(&jsonl_path).unwrap();
         let lines: Vec<&str> = content.lines().filter(|l| !l.is_empty()).collect();
         assert_eq!(lines.len(), 3, "expected 3 jsonl lines, got: {content}");

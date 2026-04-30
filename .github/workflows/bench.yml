@@ -1,19 +1,19 @@
-name: Bench (Phase 4-α)
+name: Bench
 
-# Phase 4-α:
-#   Step 1 v0 smoke (health): LLM 起動健全性 + 生成速度 + 簡易指示追従
-#   Step 2 (oracle): LongMemEval_oracle 30 問 (層化抽出、規則ベース primary)
-#   Step 3 PR ① (smoke): RULER NIAH-S 4 ケース (合成、Tier 0 baseline)
-#   Step 3 PR ② (cr): MemoryAgentBench Conflict_Resolution 8 ケース
-#                       (BM25 retrieval で context 圧縮、supersession 検証)
-#   Step 3 PR ③ (ablations): Tier ablation matrix (tier-0 / tier-0-1 /
-#                       tier-0-1-2 / full の 4 構成、smoke / oracle / cr に
-#                       横断適用)。LLM 不使用 ablation は retrieval recall、
-#                       full は LLM answer match で判定
+# tsumugi の encoder-only ベンチ。
 #
-# - schedule (nightly) は **未設定**。Step 1 smoke が安定するまでは
-#   workflow_dispatch のみで起動する (計画書方針通り、PR では走らない)。
-# - 既存 .github/workflows/ci.yml には一切手を入れない。
+# 構成:
+# - **PR**: cr suite × tier-0-1-2 のみを実行 (~5 min)。`main` の最後の
+#   bench snapshot とのレグレッション比較。snapshot に PASS で記録された
+#   case が PR で FAIL に転じたら job を fail させる。
+# - **push to main**: 同じ bench を実行し、結果を snapshot として cache
+#   に保存。次回以降の PR がこの snapshot を比較対象にする。
+# - **workflow_dispatch**: 手動。任意の suite / ablation を選択可能で、
+#   nightly 観測 / 詳細評価のための逃げ道。
+#
+# LLM 関連の step (llama.cpp install / start / health / Qwen GGUF
+# download) は LLM 削除と共に廃止。`Suite::Health` と `Ablation::Full`
+# は同時に削除されたので runner 側でも参照されない。
 #
 # 詳細は docs/ci-benchmark-integration-plan.md。
 
@@ -25,61 +25,50 @@ on:
         required: true
         type: choice
         options:
-          - health
-          - oracle
           - smoke
+          - oracle
           - cr
           - all
-        default: health
-      llama_cpp_tag:
-        description: 'llama.cpp release tag (default: latest)'
-        required: false
-        type: string
-        default: latest
-      qwen_revision:
-        description: 'HF revision for Qwen3.5-4B GGUF (default: main)'
-        required: false
-        type: string
-        default: main
+        default: cr
       longmemeval_per_type:
-        description: 'oracle: questions per type (1 = 6 fast, 2 = 12, 5 = 30 full default)'
+        description: 'oracle: questions per type (1=6 fast, 5=30 full)'
         required: false
         type: string
-        # 実機 oracle smoke #3 で 1 問あたり ~5.5min と判明。30 問は
-        # 120min timeout に間に合わない。default を 1 (6 問、~33min)
-        # に下げて反復実行を可能にし、本番品質評価をしたい時に手動で
-        # 5 を指定する運用に変更。
-        default: '1'
+        default: '5'
       ruler_seq_lengths:
-        description: 'smoke (RULER NIAH-S): seq_lengths CSV (default 2048,4096,8192,12288 for 16K ctx)'
+        description: 'smoke (RULER NIAH-S): seq_lengths CSV'
         required: false
         type: string
         default: '2048,4096,8192,12288'
       ablations:
-        description: 'Tier ablation set CSV (tier-0|tier-0-1|tier-0-1-2|full)。空 = 4 構成すべて'
+        description: 'Tier ablation set CSV (tier-0|tier-0-1|tier-0-1-2)'
         required: false
         type: string
-        default: 'tier-0,tier-0-1,tier-0-1-2,full'
+        default: 'tier-0,tier-0-1,tier-0-1-2'
+  pull_request:
+    paths:
+      - 'tsumugi-core/**'
+      - 'benches/**'
+      - '.github/workflows/bench.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'tsumugi-core/**'
+      - 'benches/**'
+      - '.github/workflows/bench.yml'
 
 permissions:
   contents: read
 
 jobs:
   bench:
-    name: 'bench (${{ inputs.suite }})'
+    name: bench
     runs-on: ubuntu-latest
-    # Qwen 4B Q4_K_M @ 4 vCPU で oracle 30 問は 60min を超える実測
-    # (実機 smoke #2 で 58min 経過後 cancel)。oracle / all suite で
-    # マージンを確保するため 150min。tier-0 / tier-0-1 / tier-0-1-2 は
-    # LLM 不使用 (BM25 / cosine / TruncateCompressor のみ) で per case
-    # <1s だが、4 ablation × N case の累積と HybridRetriever の embedding
-    # pre-compute (Phase 4-γ Step 1 以降は OnnxEmbedding e5-small 384-dim、
-    # CPU で 10-50ms/chunk) で総時間の上振れリスクがある。health smoke は
-    # 数分で済む。
-    timeout-minutes: 150
+    # cr × tier-0-1-2 で ~5 min、workflow_dispatch の oracle full まで
+    # 含めても 30 min 程度なので timeout 30 min。
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
 
@@ -87,11 +76,10 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/huggingface/hub
-          key: hf-bench-v1-qwen-${{ inputs.qwen_revision }}-${{ hashFiles('benches/scripts/download_models.sh') }}
+          key: hf-bench-v2-e5-${{ hashFiles('benches/scripts/download_models.sh') }}
 
       - name: Cache LLMLingua-2 ONNX export
-        # Phase 4-γ Step 2: optimum-cli export を毎回回すと job 開始から
-        # ~90 秒 (mBERT-base 110M の DL + ONNX export)。export 結果を
+        # mBERT-base 110M の DL + ONNX export は ~90 sec、export 結果を
         # cache すれば再 run は instant。`download_llmlingua2.sh` の
         # hash を key に含めて script を変えると bust する。
         uses: actions/cache@v4
@@ -100,125 +88,115 @@ jobs:
           key: llmlingua2-v1-${{ hashFiles('benches/scripts/download_llmlingua2.sh') }}
 
       - name: Cache DistilBART ONNX export
-        # Phase 4-γ Step 5: encoder + decoder + decoder_with_past の 3
-        # ONNX graph を出力するため optimum-cli export は ~120 秒。
-        # cache すれば再 run は instant。`download_distilbart.sh` の
-        # hash を key に含めて script を変えると bust する。
+        # encoder + decoder + decoder_with_past の 3 graph export は
+        # ~120 sec、cache 命中時 instant。bench runner は現状
+        # `Summarizer` を消費していないので workflow_dispatch でのみ export 実行。
         uses: actions/cache@v4
         with:
           path: ~/.cache/tsumugi/distilbart-cnn-6-6
           key: distilbart-v1-${{ hashFiles('benches/scripts/download_distilbart.sh') }}
 
-      - name: Install llama.cpp release
-        env:
-          LLAMA_CPP_TAG: ${{ inputs.llama_cpp_tag }}
-          # api.github.com の anonymous rate-limit (60/h) を回避するため
-          # token を渡す。read-only で十分なので default の GITHUB_TOKEN
-          # で OK。
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: ./benches/scripts/install_llama_cpp.sh
+      - name: Determine effective inputs
+        # `pull_request` / `push` triggers では `inputs.*` が undefined。
+        # 既定値を bash で導出する。
+        id: cfg
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "suite=${{ inputs.suite }}" >> "$GITHUB_OUTPUT"
+            echo "ablations=${{ inputs.ablations }}" >> "$GITHUB_OUTPUT"
+            echo "lme_per_type=${{ inputs.longmemeval_per_type }}" >> "$GITHUB_OUTPUT"
+            echo "ruler_seq=${{ inputs.ruler_seq_lengths }}" >> "$GITHUB_OUTPUT"
+          else
+            # PR / push to main: cr × tier-0-1-2 固定 (snapshot regression
+            # check の母集団)。tier-0-1-2 は OnnxEmbedding + LlmLingua2
+            # の両方を経由する最重 path で、breakage がここで検出できる。
+            echo "suite=cr" >> "$GITHUB_OUTPUT"
+            echo "ablations=tier-0-1-2" >> "$GITHUB_OUTPUT"
+            echo "lme_per_type=1" >> "$GITHUB_OUTPUT"
+            echo "ruler_seq=2048,4096,8192,12288" >> "$GITHUB_OUTPUT"
+          fi
 
-      - name: Download models (Qwen3.5-4B GGUF + multilingual-e5-small)
-        env:
-          QWEN_REVISION: ${{ inputs.qwen_revision }}
+      - name: Download embedding model (multilingual-e5-small ONNX)
         run: ./benches/scripts/download_models.sh
 
-      - name: Download datasets (LongMemEval oracle + MemoryAgentBench CR)
-        if: inputs.suite == 'oracle' || inputs.suite == 'cr' || inputs.suite == 'all'
-        # script 1 本で両 dataset を取る。LongMemEval ~15 MB + CR ~1.5 MB
-        # で download cost は無視可能、suite 別の条件分岐は workflow 側で行う。
+      - name: Download datasets
+        if: steps.cfg.outputs.suite == 'oracle' || steps.cfg.outputs.suite == 'cr' || steps.cfg.outputs.suite == 'all'
         run: ./benches/scripts/download_datasets.sh
 
       - name: Resolve multilingual-e5-small paths
-        # Phase 4-γ Step 1: HF cache から e5-small の ONNX / tokenizer
-        # ファイルパスを取り出して $GITHUB_ENV に流し込む。bench runner は
-        # `TSUMUGI_E5_MODEL_PATH` / `TSUMUGI_E5_TOKENIZER_PATH` が両方
-        # 設定されていれば tier-0-1 を OnnxEmbedding に切り替える。
+        # HF cache から e5-small の ONNX / tokenizer ファイルパスを
+        # `$GITHUB_ENV` に流し込む。bench runner は `TSUMUGI_E5_*` env が
+        # 両方設定されていれば tier-0-1 を OnnxEmbedding に切り替える。
         run: ./benches/scripts/resolve_e5_paths.sh >> "$GITHUB_ENV"
 
       - name: Export + resolve LLMLingua-2 mBERT paths
-        # Phase 4-γ Step 2: optimum-cli で `microsoft/llmlingua-2-bert-base-multilingual-cased-meetingbank`
-        # を ONNX export し、`TSUMUGI_LLMLINGUA2_MODEL_PATH` /
-        # `TSUMUGI_LLMLINGUA2_TOKENIZER_PATH` を $GITHUB_ENV に流し込む。
-        # bench runner は両方が設定されていれば tier-0-1-2 の compressor を
-        # `TruncateCompressor` から `LlmLingua2Compressor` に切り替える。
+        # tier-0-1-2 を含む実行でのみ必要。
+        if: contains(steps.cfg.outputs.ablations, 'tier-0-1-2')
         run: ./benches/scripts/download_llmlingua2.sh >> "$GITHUB_ENV"
 
       - name: Export + resolve DistilBART paths
-        # Phase 4-γ Step 5: optimum-cli で `sshleifer/distilbart-cnn-6-6` を
-        # `text2text-generation-with-past` task で ONNX export し、
-        # `TSUMUGI_DISTILBART_DIR` を $GITHUB_ENV に流し込む。
-        # `DistilBartSummarizer::from_dir` がこのディレクトリ配下の
-        # `encoder_model.onnx` / `decoder_model.onnx` /
-        # `decoder_with_past_model.onnx` / `tokenizer.json` を読む。
+        # bench runner は現状 `Summarizer` を消費していないが、
+        # workflow_dispatch では export を回して cache 効果を維持する。
+        if: github.event_name == 'workflow_dispatch'
         run: ./benches/scripts/download_distilbart.sh >> "$GITHUB_ENV"
 
-      - name: Build runner with network + onnx features
-        # `onnx` feature 有効時は ort 2.x が ONNX Runtime バイナリを
-        # ダウンロードする (download-binaries feature)。CI runner で
-        # 数百 MB の追加 download。
-        run: cargo build --release -p tsumugi-bench --features "network,onnx"
+      - name: Build runner with onnx feature
+        run: cargo build --release -p tsumugi-bench --features onnx
 
-      - name: Start llama-server
-        run: nohup ./benches/scripts/start_llama_server.sh > llama-server.log 2>&1 &
-
-      - name: Wait for llama-server health
-        # 4 vCPU CPU で Qwen 4B Q4_K_M のモデルロード + KV cache init は
-        # 300s で足りない可能性があるため 600s。実機 smoke の実測値で再調整。
-        run: ./benches/scripts/wait_for_health.sh http://localhost:8080/health 600
-
-      - name: Diagnose llama-server on failure
-        if: failure()
-        # health timeout / health-step 失敗時に llama-server.log と
-        # process / port 状態を workflow output に出して原因切り分けを
-        # artifact 取得なしでできるようにする。
-        run: |
-          echo "=== llama-server.log (full) ==="
-          cat llama-server.log 2>&1 || echo "(log file missing)"
-          echo
-          echo "=== llama-server / qwen processes ==="
-          ps -ef | grep -E "llama-server|qwen|gguf" | grep -v grep || echo "(no llama-server process)"
-          echo
-          echo "=== port 8080 listeners ==="
-          ss -tlnp 2>/dev/null | grep ':8080' || echo "(port 8080 not listening)"
-          echo
-          echo "=== /tmp / disk usage ==="
-          df -h /tmp / 2>/dev/null || true
+      - name: Restore baseline snapshot
+        # PR / push 双方で main の snapshot を復元する。PR は比較に使う、
+        # main push は cache hit で skip 判定にだけ参照する。
+        # restore-keys の prefix 一致で main 系最新 sha の snapshot を拾う。
+        # cache が無い場合 (初回 main push 前) は何も起こらず空のまま。
+        if: github.event_name != 'workflow_dispatch'
+        uses: actions/cache/restore@v4
+        with:
+          path: .bench-snapshot/
+          key: bench-snapshot-main-${{ github.sha }}-never-matches
+          restore-keys: |
+            bench-snapshot-main-
 
       - name: Run bench
         env:
-          # Step 2 の oracle adapter は LONGMEMEVAL_PATH を読む。
-          # download_datasets.sh が `benches/data/longmemeval_oracle` に
-          # symlink を張っている。
           LONGMEMEVAL_PATH: ${{ github.workspace }}/benches/data/longmemeval_oracle
-          # oracle のサンプル数 (per_type)。default 5 = 30 問、CI で
-          # timeout に当たりそうなら 2 = 12 問に下げる等。
-          LONGMEMEVAL_PER_TYPE: ${{ inputs.longmemeval_per_type }}
-          # Step 3 の smoke (RULER NIAH-S) は seq_lengths を env で受ける。
-          # llama-server `--ctx-size 16384` に収まる範囲で指定すること。
-          RULER_SEQ_LENGTHS: ${{ inputs.ruler_seq_lengths }}
-          # Step 3 PR ② の cr (MemoryAgentBench Conflict_Resolution)。
-          # adapter は MAB_CR_PATH を読む。download_datasets.sh が
-          # parquet → JSONL 変換した結果がここに置かれる。
+          LONGMEMEVAL_PER_TYPE: ${{ steps.cfg.outputs.lme_per_type }}
+          RULER_SEQ_LENGTHS: ${{ steps.cfg.outputs.ruler_seq }}
           MAB_CR_PATH: ${{ github.workspace }}/benches/data/memoryagentbench_cr.jsonl
-          # Step 3 PR ③ の Tier ablation matrix。CLI `--ablations` が優先、
-          # 空指定 (空文字列) なら BENCH_ABLATIONS env もスキップして
-          # adapter 内 default_set (4 ablation) にフォールバックする。
-          BENCH_ABLATIONS: ${{ inputs.ablations }}
+          BENCH_ABLATIONS: ${{ steps.cfg.outputs.ablations }}
         run: |
+          mkdir -p benches/results/${{ github.run_id }}
           ./target/release/tsumugi-bench \
-            --suite ${{ inputs.suite }} \
-            --ablations "${{ inputs.ablations }}" \
-            --output benches/results/${{ github.run_id }} \
-            --llm-base-url http://localhost:8080/v1 \
-            --llm-model Qwen3.5-4B-Instruct
+            --suite ${{ steps.cfg.outputs.suite }} \
+            --ablations "${{ steps.cfg.outputs.ablations }}" \
+            --output benches/results/${{ github.run_id }}
+
+      - name: Compare snapshot
+        # PR では必須 (regression なら fail)、push to main では情報目的のみ
+        # (true → main にマージ済の悪化を発見、log だけ出して continue)。
+        if: github.event_name == 'pull_request'
+        run: |
+          ./benches/scripts/compare_snapshot.sh \
+            .bench-snapshot/summary.json \
+            benches/results/${{ github.run_id }}/summary.json
+
+      - name: Save snapshot
+        # main push でのみ snapshot を更新。これが次回 PR の比較対象になる。
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          mkdir -p .bench-snapshot
+          cp benches/results/${{ github.run_id }}/summary.json .bench-snapshot/summary.json
+
+      - name: Save snapshot cache
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@v4
+        with:
+          path: .bench-snapshot/
+          key: bench-snapshot-main-${{ github.sha }}
 
       - name: Upload results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: bench-${{ inputs.suite }}-${{ github.run_id }}
-          path: |
-            benches/results/
-            llama-server.log
+          name: bench-${{ steps.cfg.outputs.suite }}-${{ github.run_id }}
+          path: benches/results/
           retention-days: 30

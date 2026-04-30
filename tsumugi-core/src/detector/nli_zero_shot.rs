@@ -1,9 +1,8 @@
 //! NliZeroShotDetector — encoder-only EventDetector via NLI entailment.
 //!
-//! Phase 4-γ Step 4 ([`docs/llm-free-stack-plan.md`] § 5.2 (4)). Replaces
-//! the LLM-delegated `LLMClassifierDetector` for users who want
-//! deterministic, reproducible event detection without an autoregressive
-//! provider in the loop.
+//! Phase 4-γ Step 4 ([`docs/llm-free-stack-plan.md`] § 5.2 (4)). The
+//! deterministic encoder-only path for event detection in the LLM-free
+//! stack.
 //!
 //! ### Approach
 //!
@@ -396,8 +395,7 @@ impl NliZeroShotDetector {
         anyhow::bail!(
             "NliZeroShotDetector::detect requires the `onnx` feature \
              (model_path = {:?}). Rebuild with `--features onnx` or use \
-             KeywordDetector / EmbeddingSimilarityDetector / \
-             LLMClassifierDetector instead.",
+             KeywordDetector / EmbeddingSimilarityDetector instead.",
             self.model_path
         )
     }

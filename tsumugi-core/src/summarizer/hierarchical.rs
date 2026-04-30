@@ -88,15 +88,35 @@ impl HierarchicalSummarizer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::providers::MockLLMProvider;
-    use crate::summarizer::{ExtractiveBM25Summarizer, LlmSummarizer};
-    use crate::traits::llm::LLMProvider;
+    use crate::summarizer::ExtractiveBM25Summarizer;
+
+    /// Fixed-output summarizer for hierarchical dispatch tests. Replaces
+    /// the LLM-delegated summarizer that this test originally used; the
+    /// LLM-removal PR took out `LlmSummarizer` so we exercise tier-3
+    /// dispatch via a sentinel string.
+    struct FixedSummarizer {
+        text: String,
+        method: SummaryMethod,
+    }
+
+    #[async_trait::async_trait]
+    impl Summarizer for FixedSummarizer {
+        async fn summarize(&self, _chunk: &Chunk) -> anyhow::Result<String> {
+            Ok(self.text.clone())
+        }
+
+        fn method(&self) -> SummaryMethod {
+            self.method
+        }
+    }
 
     #[tokio::test]
     async fn dispatches_by_level() {
-        let llm: Arc<dyn LLMProvider> = Arc::new(MockLLMProvider::new("[TIER3]"));
         let tier1: Arc<dyn Summarizer> = Arc::new(ExtractiveBM25Summarizer::new(2));
-        let tier3: Arc<dyn Summarizer> = Arc::new(LlmSummarizer::new(llm));
+        let tier3: Arc<dyn Summarizer> = Arc::new(FixedSummarizer {
+            text: "[TIER3] sentinel".into(),
+            method: SummaryMethod::DistilBart,
+        });
 
         let h = HierarchicalSummarizer::new()
             .with_level(1, tier1)

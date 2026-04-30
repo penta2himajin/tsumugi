@@ -53,7 +53,6 @@ sig Custom extends SourceLocationValue {}
 -------------------------------------------------------------------------------
 
 abstract sig SummaryMethod {}
-one sig LlmFull          extends SummaryMethod {}
 one sig LlmLingua2       extends SummaryMethod {}
 one sig SelectiveContext extends SummaryMethod {}
 one sig ExtractiveBM25   extends SummaryMethod {}
