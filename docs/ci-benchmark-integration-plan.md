@@ -250,16 +250,33 @@ benches/
 
 ### Tier 別 ablation の分離
 
-各ベンチで **同一のテストケースを Tier 構成違いで複数回回す** ことを必須仕様とする。これは Mayu の価格設計 (monetization-strategy.md の Tier 別ablation の根拠) に直結する。
+各ベンチで **同一のテストケースを Tier 構成違いで複数回回す** ことを必須仕様とする。
 
 | ablation | 構成 | 用途 |
 |---|---|---|
-| `tier-0` | BM25 のみ (`Bm25Retriever` + `NoDecayScorer`) | LLM 不使用 baseline |
-| `tier-0-1` | BM25 + cosine semantic (`HybridRetriever`) | semantic 効果の単独測定 |
-| `tier-0-1-2` | + `LlmLinguaCompressor` (Tier 2) | 圧縮の効果測定 |
-| `full` | + `LlmSummarizer` (Tier 3) | 全 Tier 投入 |
+| `tier-0` | BM25 のみ (`Bm25Retriever`) | LLM 不使用 baseline |
+| `tier-0-1` | BM25 + cosine semantic (`HybridRetriever`、embedding は Phase 4-α Step 3 では `MockEmbedding` (FNV-1a 64-dim、deterministic)、Step 4+ で `OnnxEmbedding` (multilingual-e5-small) に置換) | semantic 効果の単独測定 |
+| `tier-0-1-2` | + `TruncateCompressor` (Tier 0-2 の非 LLM 圧縮、`CompressionHint` で whitespace token budget を指定) | budget 制約下の圧縮効果測定 |
+| `full` | LLM full prompt (BM25 で context を ~10K tok に縮めて LLM に投げる) | 全 Tier 投入 |
 
-各 ablation でメトリクス (accuracy / F1 / latency / token cost) を記録し、`results/<run_id>/<bench>/<ablation>.jsonl` に出力する。
+各 ablation でメトリクス (accuracy / latency / retrieval-side metrics) を記録し、`results/<run_id>/<bench>/<ablation>.jsonl` に出力する。
+
+#### 評価指標の決定 (Step 3 PR ③、2026-04-30)
+
+- LLM 不使用 ablation (`tier-0` / `tier-0-1` / `tier-0-1-2`): **retrieval recall** = `substring_match[_any](concat(retrieved_chunks_top_k), expected_answers)`。retrieve した chunk 群の concatenation (tier-0-1-2 では `TruncateCompressor` 適用後) が期待回答を substring として含むかで判定する
+- `full`: 既存通り **answer match** = LLM 生成出力 (`response.text` または `reasoning_content`) に対する `substring_match[_any]`
+
+#### 設計判断と注記 (Step 3 PR ③、2026-04-30)
+
+- **`tier-0-1` の embedding 選択**: 当初は `multilingual-e5-small` ONNX を予定していたが、`tsumugi_core::providers::OnnxEmbedding` は trait 面のみで実装が未完了 (PR #9 skeleton)。LLM ローカル server に embedding endpoint を併設する案は CI runner (7GB RAM) では LLM 4B + embed model 同時 OOM リスクがある。Phase 4-α Step 3 では `MockEmbedding` (deterministic、軽量) で代替し、Phase 4-α Step 4 以降で `OnnxEmbedding` に切替える方針。`tier-0-1` の数値は再計測対象。
+- **`tier-0-1-2` の compressor 選択**: 当初予定の `LlmLinguaCompressor` は tsumugi 現実装では LLM 委譲版 (Phase 2 完了)。これを採用すると `tier-0-1-2` も LLM を呼ぶことになり「`tier-0` から `full` までの LLM 不使用 → 使用」軸が連続性を失う。Phase 4-α Step 3 では `TruncateCompressor` (head + " … " + tail tokens、LLM 不使用、Tier 0-2 範囲) を採用し、paper-exact な LLMLingua-2 ML 実装は Phase 3+ の課題として保留する。
+- **`full` の Tier 3 構成**: 既存 adapter は LLM full prompt のみで `LlmSummarizer` を呼ばない。Phase 4-α Step 3 範囲では **既存 `full` の動作を保持**し、`+ LlmSummarizer` 統合は scope 外とする。
+
+#### 実装インターフェース
+
+- 各 adapter は `run_*_with_ablation(opts: &SuiteRunOptions, ablation: Ablation, dataset_path: &Path) -> SectionReport` を提供。`Suite::run` が `opts.ablations` を loop して 4 sections を返す
+- ablation 選択: `--ablations <csv>` CLI flag > `BENCH_ABLATIONS` env > default (4 ablation 全部)
+- 共通 retrieval / compression utility は `benches/runner/src/adapters/common.rs`
 
 ### メトリクス
 
@@ -268,6 +285,17 @@ benches/
 - RULER: 公式 string match (NIAH 系は完全一致)
 
 LLM-as-Judge は判定モデルの差で揺れるため、**規則ベース primary + LLM judge secondary** とし、不一致時は両方記録する。後で paper-exact 再現が必要になったら API judge に差し替える。
+
+#### `CaseMetric` schema (Step 3 PR ③ 拡張)
+
+`benches/runner/src/metrics.rs::CaseMetric` は jsonl の 1 行に対応。以下の Optional フィールドが追加された (既存 `full` jsonl との後方互換維持。`Option::is_none` のフィールドは serialize でスキップ):
+
+- `retrieval_latency_ms: Option<u64>` — retrieval (BM25 / Hybrid) 段の wall time。LLM 不使用 ablation (`tier-0` / `tier-0-1` / `tier-0-1-2`) で記録
+- `retrieved_chunks: Option<usize>` — retrieve した chunk 数 (top_k で打ち切り後)
+- `retrieval_chars: Option<usize>` — retrieved chunks の concatenation の文字数 (compression ratio 計算の分母)
+- `compressed_chars: Option<usize>` — `TruncateCompressor` 適用後の文字数。`tier-0-1-2` のみ Some
+
+`metrics::compression_ratio(original, compressed) -> f64` で圧縮率を計算 (集計時に jsonl から後段で算出)。
 
 ### MemoryAgentBench CR の context truncation (Step 3 PR ② 実装決定、2026-04-30)
 

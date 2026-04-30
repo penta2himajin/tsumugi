@@ -21,28 +21,22 @@
 //! parquet → JSONL 変換 (pyarrow 経由) を担当する。
 
 use crate::report::SectionReport;
-use crate::suite::SuiteRunOptions;
+use crate::suite::{Ablation, SuiteRunOptions};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
+#[cfg(feature = "network")]
+use crate::adapters::common::{
+    bm25_retrieve, chunk_text, concat_for_judge, hybrid_retrieve, tail_chars, truncate_compress,
+};
 #[cfg(feature = "network")]
 use crate::metrics::{substring_match_any, CaseMetric};
 #[cfg(feature = "network")]
 use crate::report::IncrementalSectionWriter;
 #[cfg(feature = "network")]
-use crate::suite::Ablation;
-#[cfg(feature = "network")]
-use std::collections::HashMap;
-#[cfg(feature = "network")]
-use tsumugi_core::domain::ChunkId;
-#[cfg(feature = "network")]
 use tsumugi_core::providers::OpenAiCompatibleProvider;
 #[cfg(feature = "network")]
-use tsumugi_core::retriever::Bm25Retriever;
-#[cfg(feature = "network")]
 use tsumugi_core::traits::llm::{CompletionRequest, LLMProvider};
-#[cfg(feature = "network")]
-use tsumugi_core::traits::retriever::Retriever;
 
 /// 1 chunk あたりのターゲット文字数。English ASCII で 4 chars/token と仮定し
 /// 1024 token を保守的に約 4096 chars にする。`CR_CHUNK_CHARS` env で override 可。
@@ -58,6 +52,14 @@ const DEFAULT_FALLBACK_TAIL_CHARS: usize = 40_000;
 /// 1 行あたりに評価する questions の数。default=1 で `questions[0]` のみ。
 /// `CR_QUESTIONS_PER_ROW` env で 1..N に拡張可能 (各 row × per_row case を生成)。
 const DEFAULT_QUESTIONS_PER_ROW: usize = 1;
+
+/// tier-0-1-2 の `TruncateCompressor` budget (whitespace tokens)。LLM 不使用
+/// ablation で retrieved chunks を圧縮した結果に対し substring match を取る。
+/// `CR_COMPRESS_BUDGET_TOKENS` env で override 可。
+const DEFAULT_COMPRESS_BUDGET_TOKENS: u32 = 2048;
+/// `TruncateCompressor` の tail 保持 token 数 (head + " … " + tail のうち
+/// tail 側に残す最小 token 数)。
+const DEFAULT_COMPRESS_PRESERVE_TAIL: u32 = 256;
 
 #[derive(Debug, Deserialize, Clone)]
 struct Entry {
@@ -104,15 +106,40 @@ fn questions_per_row_from_env() -> usize {
         .unwrap_or(DEFAULT_QUESTIONS_PER_ROW)
 }
 
+#[cfg(feature = "network")]
+fn compress_budget_from_env() -> u32 {
+    std::env::var("CR_COMPRESS_BUDGET_TOKENS")
+        .ok()
+        .and_then(|s| s.parse::<u32>().ok())
+        .filter(|&n| n > 0)
+        .unwrap_or(DEFAULT_COMPRESS_BUDGET_TOKENS)
+}
+
 pub async fn run_conflict_resolution(opts: &SuiteRunOptions) -> anyhow::Result<SectionReport> {
-    let dataset_path = std::env::var("MAB_CR_PATH")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("benches/data/memoryagentbench_cr.jsonl"));
-    run_with_dataset(opts, &dataset_path).await
+    // 後方互換: ablation 概念を露出しない既定 entry。`Suite::run` から
+    // 個別 ablation を回したい場合は `run_with_dataset_with_ablation` を直接使う。
+    let dataset_path = default_dataset_path();
+    run_with_dataset_with_ablation(opts, Ablation::Full, &dataset_path).await
+}
+
+#[cfg(not(feature = "network"))]
+pub async fn run_with_dataset_with_ablation(
+    _opts: &SuiteRunOptions,
+    _ablation: Ablation,
+    _path: &Path,
+) -> anyhow::Result<SectionReport> {
+    anyhow::bail!(
+        "Suite::Cr requires the `network` feature for the OpenAI-compatible \
+         LLM provider. Rebuild `tsumugi-bench` with `--features network`."
+    )
 }
 
 #[cfg(feature = "network")]
-async fn run_with_dataset(opts: &SuiteRunOptions, path: &Path) -> anyhow::Result<SectionReport> {
+pub async fn run_with_dataset_with_ablation(
+    opts: &SuiteRunOptions,
+    ablation: Ablation,
+    path: &Path,
+) -> anyhow::Result<SectionReport> {
     let entries = load_entries(path)?;
     let per_row = questions_per_row_from_env();
     let cases = build_cases(&entries, per_row);
@@ -127,7 +154,8 @@ async fn run_with_dataset(opts: &SuiteRunOptions, path: &Path) -> anyhow::Result
     let chunk_chars = chunk_chars_from_env();
     let top_k = top_k_from_env();
     eprintln!(
-        "[cr] {} cases ({} rows × {} questions/row), chunk_chars={}, top_k={}",
+        "[cr/{}] {} cases ({} rows × {} questions/row), chunk_chars={}, top_k={}",
+        ablation.name(),
         cases.len(),
         entries.len(),
         per_row,
@@ -135,6 +163,21 @@ async fn run_with_dataset(opts: &SuiteRunOptions, path: &Path) -> anyhow::Result
         top_k
     );
 
+    match ablation {
+        Ablation::Full => run_cr_full(opts, &cases, chunk_chars, top_k).await,
+        Ablation::Tier0 | Ablation::Tier01 | Ablation::Tier012 => {
+            run_cr_retrieval_only(opts, &cases, ablation, chunk_chars, top_k).await
+        }
+    }
+}
+
+#[cfg(feature = "network")]
+async fn run_cr_full(
+    opts: &SuiteRunOptions,
+    cases: &[CrCase],
+    chunk_chars: usize,
+    top_k: usize,
+) -> anyhow::Result<SectionReport> {
     let provider = OpenAiCompatibleProvider::new(&opts.llm_base_url, &opts.llm_model);
     let mut writer =
         IncrementalSectionWriter::create(&opts.output_dir, "memoryagentbench-cr", Ablation::Full)?;
@@ -149,7 +192,7 @@ async fn run_with_dataset(opts: &SuiteRunOptions, path: &Path) -> anyhow::Result
             retrieved.join("\n\n---\n\n")
         };
         eprintln!(
-            "[cr] [{}/{}] case={} chunks={} hits={} ctx_chars={} fallback={} answers={:?}",
+            "[cr/full] [{}/{}] case={} chunks={} hits={} ctx_chars={} fallback={} answers={:?}",
             idx + 1,
             total,
             case.case_id,
@@ -182,7 +225,7 @@ async fn run_with_dataset(opts: &SuiteRunOptions, path: &Path) -> anyhow::Result
             .map(|r| r.chars().take(200).collect())
             .unwrap_or_default();
         eprintln!(
-            "[cr] [{}/{}] -> latency={}ms correct={} prompt_tokens={:?} completion_tokens={:?} response={:?} reasoning={:?}",
+            "[cr/full] [{}/{}] -> latency={}ms correct={} prompt_tokens={:?} completion_tokens={:?} response={:?} reasoning={:?}",
             idx + 1,
             total,
             latency_ms,
@@ -192,23 +235,90 @@ async fn run_with_dataset(opts: &SuiteRunOptions, path: &Path) -> anyhow::Result
             response_preview,
             reasoning_preview
         );
+        writer.write_case(CaseMetric::for_full(
+            case.case_id.clone(),
+            correct,
+            latency_ms,
+            resp.prompt_tokens,
+            resp.completion_tokens,
+        ))?;
+    }
+    Ok(writer.finish())
+}
+
+/// LLM 不使用 ablation (tier-0 / tier-0-1 / tier-0-1-2) の共通 path。
+/// retrieval (BM25 / Hybrid) のみで判定し、tier-0-1-2 では retrieval 結果に
+/// `TruncateCompressor` を適用する。
+#[cfg(feature = "network")]
+async fn run_cr_retrieval_only(
+    opts: &SuiteRunOptions,
+    cases: &[CrCase],
+    ablation: Ablation,
+    chunk_chars: usize,
+    top_k: usize,
+) -> anyhow::Result<SectionReport> {
+    debug_assert!(matches!(
+        ablation,
+        Ablation::Tier0 | Ablation::Tier01 | Ablation::Tier012
+    ));
+    let mut writer =
+        IncrementalSectionWriter::create(&opts.output_dir, "memoryagentbench-cr", ablation)?;
+    let budget = compress_budget_from_env();
+    let total = cases.len();
+    for (idx, case) in cases.iter().enumerate() {
+        let chunks = chunk_text(&case.context, chunk_chars);
+        let started = std::time::Instant::now();
+        let retrieved = match ablation {
+            Ablation::Tier0 => bm25_retrieve(&chunks, &case.question, top_k).await?,
+            Ablation::Tier01 | Ablation::Tier012 => {
+                hybrid_retrieve(&chunks, &case.question, top_k).await?
+            }
+            Ablation::Full => unreachable!("guarded by debug_assert above"),
+        };
+        let concat = concat_for_judge(&retrieved);
+        let retrieval_chars = concat.chars().count();
+        let (judge_text, compressed_chars) = if matches!(ablation, Ablation::Tier012) {
+            let compressed =
+                truncate_compress(&concat, budget, DEFAULT_COMPRESS_PRESERVE_TAIL).await?;
+            let compressed_len = compressed.chars().count();
+            (compressed, Some(compressed_len))
+        } else {
+            (concat, None)
+        };
+        let retrieval_latency_ms = started.elapsed().as_millis() as u64;
+        let correct = substring_match_any(&judge_text, &case.answers);
+        eprintln!(
+            "[cr/{}] [{}/{}] case={} chunks={} hits={} retrieval_chars={} compressed_chars={:?} correct={} latency={}ms",
+            ablation.name(),
+            idx + 1,
+            total,
+            case.case_id,
+            chunks.len(),
+            retrieved.len(),
+            retrieval_chars,
+            compressed_chars,
+            correct,
+            retrieval_latency_ms
+        );
         writer.write_case(CaseMetric {
             case_id: case.case_id.clone(),
             correct,
-            latency_ms,
-            prompt_tokens: resp.prompt_tokens,
-            completion_tokens: resp.completion_tokens,
+            latency_ms: retrieval_latency_ms,
+            prompt_tokens: None,
+            completion_tokens: None,
+            retrieval_latency_ms: Some(retrieval_latency_ms),
+            retrieved_chunks: Some(retrieved.len()),
+            retrieval_chars: Some(retrieval_chars),
+            compressed_chars,
         })?;
     }
     Ok(writer.finish())
 }
 
-#[cfg(not(feature = "network"))]
-async fn run_with_dataset(_opts: &SuiteRunOptions, _path: &Path) -> anyhow::Result<SectionReport> {
-    anyhow::bail!(
-        "Suite::Cr requires the `network` feature for the OpenAI-compatible \
-         LLM provider. Rebuild `tsumugi-bench` with `--features network`."
-    )
+pub fn default_dataset_path() -> PathBuf {
+    std::env::var("MAB_CR_PATH")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("benches/data/memoryagentbench_cr.jsonl"))
 }
 
 fn load_entries(path: &Path) -> anyhow::Result<Vec<Entry>> {
@@ -254,86 +364,6 @@ fn build_cases(entries: &[Entry], per_row: usize) -> Vec<CrCase> {
         }
     }
     cases
-}
-
-/// 文区切り (`. ! ? \n`) 優先で context を `target_chars` 程度の chunk に分割する。
-/// target を超えた次の sentence boundary で chunk 終了。最終 chunk は target を
-/// 超えないよう貪欲に詰める。Unicode multi-byte char は char_indices で安全に扱う。
-fn chunk_text(context: &str, target_chars: usize) -> Vec<String> {
-    if context.is_empty() {
-        return Vec::new();
-    }
-    // env 経由の override は >= 256 を保証している。低いターゲットは
-    // テストでのみ使用するのでフロアを設けない。
-    let target = target_chars.max(1);
-    let mut chunks = Vec::new();
-    let mut current = String::with_capacity(target + 256);
-    let bytes = context.as_bytes();
-    let mut last_boundary = 0usize;
-
-    for (i, _) in context.char_indices() {
-        let b = bytes[i];
-        // current に逐次追加
-        // (char 単位で push するため slice をまとめて取る)
-        if i > last_boundary && current.len() >= target {
-            // sentence boundary を超えた最初の位置で chunk を確定
-            chunks.push(std::mem::take(&mut current));
-        }
-        // sentence boundary 検出: '.', '!', '?', '\n'
-        if matches!(b, b'.' | b'!' | b'?' | b'\n') {
-            last_boundary = i + 1;
-        }
-        // current に該当 char を追加
-        let ch_end = next_char_boundary(context, i);
-        current.push_str(&context[i..ch_end]);
-    }
-    if !current.is_empty() {
-        chunks.push(current);
-    }
-    chunks
-}
-
-fn next_char_boundary(s: &str, i: usize) -> usize {
-    let mut j = i + 1;
-    while j < s.len() && !s.is_char_boundary(j) {
-        j += 1;
-    }
-    j
-}
-
-/// 末尾 `n` chars を char boundary に揃えて切り出す。文字列が短い場合は全体を返す。
-fn tail_chars(s: &str, n: usize) -> String {
-    if s.len() <= n {
-        return s.to_string();
-    }
-    let target_start = s.len() - n;
-    // s.len() - n は byte index、その位置が char boundary でなければ後ろにずらす。
-    let mut start = target_start;
-    while start < s.len() && !s.is_char_boundary(start) {
-        start += 1;
-    }
-    s[start..].to_string()
-}
-
-#[cfg(feature = "network")]
-async fn bm25_retrieve(
-    chunks: &[String],
-    query: &str,
-    top_k: usize,
-) -> anyhow::Result<Vec<String>> {
-    if chunks.is_empty() {
-        return Ok(Vec::new());
-    }
-    // ChunkId は UUID v4 で重複しないので、index 復元用に lookup map を持つ。
-    let pairs: Vec<(ChunkId, String)> =
-        chunks.iter().map(|c| (ChunkId::new(), c.clone())).collect();
-    let lookup: HashMap<ChunkId, String> = pairs.iter().cloned().collect();
-    let retriever = Bm25Retriever::new(pairs);
-    let hits = retriever.retrieve(query, top_k).await?;
-    Ok(hits
-        .into_iter()
-        .filter_map(|h| lookup.get(&h.chunk_id).cloned())
-        .collect())
 }
 
 fn build_prompt(question: &str, context_block: &str) -> String {
@@ -462,49 +492,6 @@ mod tests {
     }
 
     #[test]
-    fn chunk_text_splits_at_target_chars_with_sentence_boundary() {
-        let text = "First sentence. Second sentence here. Third one. ".repeat(50);
-        let chunks = chunk_text(&text, 100);
-        // 全 chunk が 200 chars 以下に収まること (target 100 + sentence overflow)
-        for c in &chunks {
-            assert!(c.len() < 250, "chunk too large: {} chars", c.len());
-        }
-        // 全 chunk を結合すると元 text に戻る
-        let rejoined: String = chunks.join("");
-        assert_eq!(rejoined, text);
-    }
-
-    #[test]
-    fn chunk_text_handles_unicode_safely() {
-        // multi-byte char が boundary で切られても panic しない
-        let text = "日本語テキストです。これは別の文。さらに次の文。".repeat(20);
-        let chunks = chunk_text(&text, 50);
-        assert!(!chunks.is_empty());
-        // 結合復元
-        let rejoined: String = chunks.join("");
-        assert_eq!(rejoined, text);
-    }
-
-    #[test]
-    fn chunk_text_empty_returns_empty() {
-        assert_eq!(chunk_text("", 100), Vec::<String>::new());
-    }
-
-    #[test]
-    fn tail_chars_respects_char_boundary() {
-        let text = "日本語テキスト";
-        let tail = tail_chars(text, 6);
-        // 切り出された部分が UTF-8 として valid (panic しないこと自体が保証)
-        assert!(tail.len() <= text.len());
-        assert!(text.ends_with(&tail));
-    }
-
-    #[test]
-    fn tail_chars_returns_full_string_when_shorter_than_n() {
-        assert_eq!(tail_chars("short", 100), "short");
-    }
-
-    #[test]
     fn build_prompt_includes_supersession_directive_and_question() {
         let p = build_prompt("Who is X?", "doc body here");
         // CR タスクに必須の supersession 指示が prompt に含まれること
@@ -559,6 +546,7 @@ mod network_tests {
             output_dir,
             llm_base_url: server_uri,
             llm_model: "qwen3.5-4b".into(),
+            ablations: crate::suite::Ablation::default_set(),
             help: false,
         }
     }
@@ -585,7 +573,9 @@ mod network_tests {
         let tmp = tempfile::tempdir().unwrap();
         let dataset = write_fixture_dataset(tmp.path(), 8);
         let opts = opts_for(server.uri(), tmp.path().to_path_buf());
-        let report = run_with_dataset(&opts, &dataset).await.expect("run");
+        let report = run_with_dataset_with_ablation(&opts, Ablation::Full, &dataset)
+            .await
+            .expect("run");
 
         assert_eq!(report.bench, "memoryagentbench-cr");
         assert_eq!(report.ablation, "full");
@@ -611,8 +601,153 @@ mod network_tests {
         let tmp = tempfile::tempdir().unwrap();
         let dataset = write_fixture_dataset(tmp.path(), 2);
         let opts = opts_for(server.uri(), tmp.path().to_path_buf());
-        let err = run_with_dataset(&opts, &dataset).await.unwrap_err();
+        let err = run_with_dataset_with_ablation(&opts, Ablation::Full, &dataset)
+            .await
+            .unwrap_err();
         assert!(err.to_string().contains("500"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn cr_tier0_uses_no_llm_and_judges_via_retrieval() {
+        // tier-0 では LLM を一切呼ばないので、mock server に POST が来ないこと
+        // を assertion で固める。answer 文字列 (`ANSWER-row{i}`) は context
+        // 内に埋め込まれており、BM25 で retrieve できれば correct=true。
+        let server = MockServer::start().await;
+        // どの POST に対しても 500 を返すモック (本来呼ばれない)
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&server)
+            .await;
+
+        let tmp = tempfile::tempdir().unwrap();
+        // fixture context 内に "ANSWER-row{i}" を含めた jsonl を作る
+        let dataset = {
+            let path = tmp.path().join("cr.jsonl");
+            let mut f = std::fs::File::create(&path).unwrap();
+            for i in 0..3 {
+                let entry = serde_json::json!({
+                    "context": format!(
+                        "Document {} body. Some statement A. Some statement B. ANSWER-row{} appears here.",
+                        i, i
+                    ),
+                    "questions": [format!("What is the special token for row {}?", i)],
+                    "answers": [[format!("ANSWER-row{}", i)]],
+                    "metadata": {}
+                });
+                use std::io::Write as _;
+                f.write_all(entry.to_string().as_bytes()).unwrap();
+                f.write_all(b"\n").unwrap();
+            }
+            path
+        };
+        let opts = opts_for(server.uri(), tmp.path().to_path_buf());
+
+        let report = run_with_dataset_with_ablation(&opts, Ablation::Tier0, &dataset)
+            .await
+            .expect("tier-0 run");
+        assert_eq!(report.bench, "memoryagentbench-cr");
+        assert_eq!(report.ablation, "tier-0");
+        assert_eq!(report.cases.len(), 3);
+        // BM25 retrieval は ANSWER-row{i} を含む chunk を必ず top_k 内に出すはず
+        // (各 row の context は短く、chunk_text 後も answer を含む chunk が
+        // 1 つだけ存在する)。よって全 case correct=true を期待。
+        let correct_count = report.cases.iter().filter(|c| c.correct).count();
+        assert_eq!(
+            correct_count, 3,
+            "all retrieval-only cases should match: {:?}",
+            report.cases
+        );
+        // retrieval-side metrics が記録されていること
+        for c in &report.cases {
+            assert!(c.retrieval_latency_ms.is_some());
+            assert!(c.retrieved_chunks.is_some());
+            assert!(c.retrieval_chars.is_some());
+            assert!(c.compressed_chars.is_none(), "tier-0 should not compress");
+            assert!(c.prompt_tokens.is_none());
+            assert!(c.completion_tokens.is_none());
+        }
+        // LLM が呼ばれていないこと
+        let received = server.received_requests().await.unwrap_or_default();
+        assert!(
+            received.is_empty(),
+            "tier-0 must not call LLM, got {} requests",
+            received.len()
+        );
+    }
+
+    #[tokio::test]
+    async fn cr_tier01_uses_hybrid_retrieval_and_no_llm() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&server)
+            .await;
+        let tmp = tempfile::tempdir().unwrap();
+        let dataset = write_fixture_dataset(tmp.path(), 2);
+        let opts = opts_for(server.uri(), tmp.path().to_path_buf());
+        let report = run_with_dataset_with_ablation(&opts, Ablation::Tier01, &dataset)
+            .await
+            .expect("tier-0-1 run");
+        assert_eq!(report.ablation, "tier-0-1");
+        assert_eq!(report.cases.len(), 2);
+        for c in &report.cases {
+            assert!(c.compressed_chars.is_none(), "tier-0-1 should not compress");
+            assert!(c.retrieved_chunks.is_some());
+        }
+        let received = server.received_requests().await.unwrap_or_default();
+        assert!(received.is_empty(), "tier-0-1 must not call LLM");
+    }
+
+    #[tokio::test]
+    async fn cr_tier012_applies_truncate_compressor() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&server)
+            .await;
+        let tmp = tempfile::tempdir().unwrap();
+        // 長めの fixture を作って圧縮効果を観測
+        let dataset = {
+            let path = tmp.path().join("cr.jsonl");
+            let mut f = std::fs::File::create(&path).unwrap();
+            for i in 0..2 {
+                let body = "lorem ipsum dolor sit amet consectetur adipiscing elit. ".repeat(200);
+                let entry = serde_json::json!({
+                    "context": format!("{} ANSWER-row{} ", body, i).repeat(3),
+                    "questions": [format!("What is the special token for row {}?", i)],
+                    "answers": [[format!("ANSWER-row{}", i)]],
+                    "metadata": {}
+                });
+                use std::io::Write as _;
+                f.write_all(entry.to_string().as_bytes()).unwrap();
+                f.write_all(b"\n").unwrap();
+            }
+            path
+        };
+        let opts = opts_for(server.uri(), tmp.path().to_path_buf());
+        // 小さい budget で圧縮効果を強制
+        std::env::set_var("CR_COMPRESS_BUDGET_TOKENS", "32");
+        let report = run_with_dataset_with_ablation(&opts, Ablation::Tier012, &dataset)
+            .await
+            .expect("tier-0-1-2 run");
+        std::env::remove_var("CR_COMPRESS_BUDGET_TOKENS");
+        assert_eq!(report.ablation, "tier-0-1-2");
+        for c in &report.cases {
+            // tier-0-1-2 では compressed_chars が必ず Some
+            assert!(
+                c.compressed_chars.is_some(),
+                "tier-0-1-2 must record compressed_chars: {c:?}"
+            );
+            // 圧縮後 chars ≤ 圧縮前 chars
+            let before = c.retrieval_chars.unwrap();
+            let after = c.compressed_chars.unwrap();
+            assert!(after <= before, "compressed {after} > original {before}");
+        }
+        let received = server.received_requests().await.unwrap_or_default();
+        assert!(received.is_empty(), "tier-0-1-2 must not call LLM");
     }
 
     #[tokio::test]
@@ -632,7 +767,9 @@ mod network_tests {
         let tmp = tempfile::tempdir().unwrap();
         let dataset = write_fixture_dataset(tmp.path(), 3);
         let opts = opts_for(server.uri(), tmp.path().to_path_buf());
-        run_with_dataset(&opts, &dataset).await.unwrap();
+        run_with_dataset_with_ablation(&opts, Ablation::Full, &dataset)
+            .await
+            .unwrap();
         let jsonl_path = tmp.path().join("memoryagentbench-cr/full.jsonl");
         let content = std::fs::read_to_string(&jsonl_path).unwrap();
         let lines: Vec<&str> = content.lines().filter(|l| !l.is_empty()).collect();

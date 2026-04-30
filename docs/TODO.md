@@ -65,8 +65,21 @@
       env で seq_len 群を上書き可能。CPU + 16K ctx 制約で default は
       {2K, 4K, 8K, 12K} の 4 ケース (公式 5 ケースの {4K, 8K, 16K, 32K, 64K}
       は GPU 環境 / 大 ctx 用)
-- [ ] Tier ablation matrix (`tier-0` / `tier-0-1` / `tier-0-1-2` / `full` の 4 構成)
-- [ ] `bench.yml` で `workflow_dispatch` から各 ablation を起動可能に
+- [x] **Tier ablation matrix** (PR ③、2026-04-30):
+      `tier-0` / `tier-0-1` / `tier-0-1-2` / `full` の 4 構成。LLM 不使用
+      ablation (`tier-0/0-1/0-1-2`) は retrieval recall (`substring_match[_any]`
+      on retrieved chunks concat) で判定、`full` は既存 LLM answer match。
+      `tier-0` は `Bm25Retriever`、`tier-0-1` は `HybridRetriever` +
+      `MockEmbedding` (FNV-1a 64-dim、ONNX 実装まで暫定)、`tier-0-1-2` は
+      `TruncateCompressor` (LLM 委譲版 `LlmLinguaCompressor` は ablation の
+      LLM 不使用軸を破壊するため不採用)。各 adapter に
+      `run_*_with_ablation(opts, ablation, dataset_path)` を追加し、
+      `Suite::run` が `opts.ablations` を loop。`CaseMetric` に
+      `retrieval_latency_ms` / `retrieved_chunks` / `retrieval_chars` /
+      `compressed_chars` の Optional フィールド追加 (後方互換)。
+      共通 utility は `benches/runner/src/adapters/common.rs`
+- [x] `bench.yml` で `workflow_dispatch` から各 ablation を起動可能に
+      (`--ablations <csv>` flag + `BENCH_ABLATIONS` env、未指定時は 4 構成全実行)
 
 ### Step 4: nightly スケジュールと regression alert
 
@@ -134,4 +147,4 @@
 
 ---
 
-*最終更新: 2026-04-29*
+*最終更新: 2026-04-30*

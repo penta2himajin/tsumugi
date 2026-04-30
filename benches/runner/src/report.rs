@@ -161,13 +161,7 @@ mod tests {
     fn write_creates_per_bench_jsonl_and_summary() {
         let dir = tempdir().expect("tempdir");
         let mut report = SuiteReport::new(Suite::Smoke);
-        let cases = vec![CaseMetric {
-            case_id: "niah-4k".into(),
-            correct: true,
-            latency_ms: 1234,
-            prompt_tokens: None,
-            completion_tokens: None,
-        }];
+        let cases = vec![CaseMetric::for_full("niah-4k", true, 1234, None, None)];
         report.add_section(SectionReport::new("ruler", Ablation::Tier0, cases));
         write(dir.path(), &report).expect("write");
         let jsonl = std::fs::read_to_string(dir.path().join("ruler/tier-0.jsonl")).unwrap();
@@ -185,13 +179,7 @@ mod tests {
             IncrementalSectionWriter::create(dir.path(), "longmemeval-oracle", Ablation::Full)
                 .expect("create");
         writer
-            .write_case(CaseMetric {
-                case_id: "q1".into(),
-                correct: true,
-                latency_ms: 100,
-                prompt_tokens: Some(10),
-                completion_tokens: Some(20),
-            })
+            .write_case(CaseMetric::for_full("q1", true, 100, Some(10), Some(20)))
             .expect("write q1");
         // q1 だけの状態で別プロセスから読めることを確認
         let intermediate =
@@ -203,13 +191,7 @@ mod tests {
         assert!(!intermediate.contains("q2"));
 
         writer
-            .write_case(CaseMetric {
-                case_id: "q2".into(),
-                correct: false,
-                latency_ms: 200,
-                prompt_tokens: Some(30),
-                completion_tokens: Some(40),
-            })
+            .write_case(CaseMetric::for_full("q2", false, 200, Some(30), Some(40)))
             .expect("write q2");
         let after_q2 =
             std::fs::read_to_string(dir.path().join("longmemeval-oracle/full.jsonl")).unwrap();
@@ -233,25 +215,13 @@ mod tests {
             let mut w =
                 IncrementalSectionWriter::create(dir.path(), "ruler-niah-s", Ablation::Full)
                     .unwrap();
-            w.write_case(CaseMetric {
-                case_id: "old".into(),
-                correct: false,
-                latency_ms: 1,
-                prompt_tokens: None,
-                completion_tokens: None,
-            })
-            .unwrap();
+            w.write_case(CaseMetric::for_full("old", false, 1, None, None))
+                .unwrap();
         }
         let mut w =
             IncrementalSectionWriter::create(dir.path(), "ruler-niah-s", Ablation::Full).unwrap();
-        w.write_case(CaseMetric {
-            case_id: "new".into(),
-            correct: true,
-            latency_ms: 2,
-            prompt_tokens: None,
-            completion_tokens: None,
-        })
-        .unwrap();
+        w.write_case(CaseMetric::for_full("new", true, 2, None, None))
+            .unwrap();
         let content = std::fs::read_to_string(dir.path().join("ruler-niah-s/full.jsonl")).unwrap();
         assert!(content.contains("new"));
         assert!(!content.contains("old"));
