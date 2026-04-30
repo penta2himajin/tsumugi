@@ -20,20 +20,19 @@
 //! 環境変数 `MAB_CR_PATH` で override 可。`download_datasets.sh` が
 //! parquet → JSONL 変換 (pyarrow 経由) を担当する。
 
-use crate::adapters::common::{chunk_text, tail_chars};
 use crate::report::SectionReport;
-use crate::suite::SuiteRunOptions;
+use crate::suite::{Ablation, SuiteRunOptions};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
 #[cfg(feature = "network")]
-use crate::adapters::common::{bm25_retrieve, concat_for_judge, hybrid_retrieve, truncate_compress};
+use crate::adapters::common::{
+    bm25_retrieve, chunk_text, concat_for_judge, hybrid_retrieve, tail_chars, truncate_compress,
+};
 #[cfg(feature = "network")]
 use crate::metrics::{substring_match_any, CaseMetric};
 #[cfg(feature = "network")]
 use crate::report::IncrementalSectionWriter;
-#[cfg(feature = "network")]
-use crate::suite::Ablation;
 #[cfg(feature = "network")]
 use tsumugi_core::providers::OpenAiCompatibleProvider;
 #[cfg(feature = "network")]

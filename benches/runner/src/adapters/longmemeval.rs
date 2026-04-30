@@ -15,7 +15,7 @@
 //! 想定。
 
 use crate::report::SectionReport;
-use crate::suite::SuiteRunOptions;
+use crate::suite::{Ablation, SuiteRunOptions};
 use serde::{Deserialize, Deserializer};
 use std::path::{Path, PathBuf};
 
@@ -25,8 +25,6 @@ use crate::adapters::common::{bm25_retrieve, concat_for_judge, hybrid_retrieve, 
 use crate::metrics::{substring_match, CaseMetric};
 #[cfg(feature = "network")]
 use crate::report::IncrementalSectionWriter;
-#[cfg(feature = "network")]
-use crate::suite::Ablation;
 #[cfg(feature = "network")]
 use tsumugi_core::providers::OpenAiCompatibleProvider;
 #[cfg(feature = "network")]

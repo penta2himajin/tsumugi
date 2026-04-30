@@ -19,7 +19,7 @@
 //! (Tier ablation matrix) で対応する。
 
 use crate::report::SectionReport;
-use crate::suite::SuiteRunOptions;
+use crate::suite::{Ablation, SuiteRunOptions};
 
 #[cfg(feature = "network")]
 use crate::adapters::common::{
@@ -29,8 +29,6 @@ use crate::adapters::common::{
 use crate::metrics::{substring_match, CaseMetric};
 #[cfg(feature = "network")]
 use crate::report::IncrementalSectionWriter;
-#[cfg(feature = "network")]
-use crate::suite::Ablation;
 #[cfg(feature = "network")]
 use tsumugi_core::providers::OpenAiCompatibleProvider;
 #[cfg(feature = "network")]
@@ -243,7 +241,7 @@ pub async fn run_niah_s(opts: &SuiteRunOptions) -> anyhow::Result<SectionReport>
 #[cfg(not(feature = "network"))]
 pub async fn run_niah_s_with_ablation(
     _opts: &SuiteRunOptions,
-    _ablation: crate::suite::Ablation,
+    _ablation: Ablation,
 ) -> anyhow::Result<SectionReport> {
     anyhow::bail!(
         "Suite::Smoke requires the `network` feature for the OpenAI-compatible \
