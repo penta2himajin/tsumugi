@@ -114,7 +114,7 @@
 | `Summarizer` | DistilBART-CNN-6-6 | 230M | `LlmSummarizer` (並列維持) |
 | `PromptCompressor` | LLMLingua-2-mBERT-base | 110M | `LlmLinguaCompressor` (並列維持、要リネーム) |
 | `QueryClassifier` | SetFit + MiniLM-L6-v2 | 22M | `BertClassifier` (並列維持) |
-| `EventDetector` | GLiNER2 | ~200M | `LLMClassifierDetector` (並列維持) |
+| `EventDetector` | GLiNER2 (`fastino/gliner2-base-v1`) | ~200M | `LLMClassifierDetector` (並列維持) |
 
 実装順序 (各 1 PR):
 
@@ -125,10 +125,12 @@
 - [ ] GLiNER2 実装 (`EventDetector`)
 - [ ] DistilBART 実装 (`Summarizer`)
 
-要検討事項 (本フェーズ着手前にライセンス確認):
+要検討事項 (本フェーズ着手前):
 
-- [ ] 採用モデル 4 つのライセンス確認 (`THIRD_PARTY_LICENSES.md` 更新)
-- [ ] GLiNER2 の HF Hub 公開状況 + ONNX export 実機検証
+- [x] 採用モデル 4 つのライセンス確認 — 全て Apache-2.0、blocker なし
+      (詳細は `llm-free-stack-plan.md` § 8)
+- [ ] `THIRD_PARTY_LICENSES.md` 更新 (実装着手時に各モデル impl PR と並行)
+- [ ] GLiNER2 (`fastino/gliner2-base-v1`) の ONNX export + Rust 推論実機検証
 - [ ] 多言語性能 (特に日本語) のリスク評価
 
 ---

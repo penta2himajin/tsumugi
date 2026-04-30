@@ -230,11 +230,11 @@ frontier 上にあり、(b) HF Hub に weights が公開されており、(c) ON
 
 | 項目 | 値 |
 |---|---|
-| モデル | GLiNER2 (Knowledgator 2025、HF Hub に公開予定/公開済) |
+| モデル | `fastino/gliner2-base-v1` (HF Hub、公開済。large/multi バリアントあり) |
 | パラメータ | ~200M (DeBERTa-v3-base ベース) |
 | 推定 CPU 速度 | ~200-400 ms / chunk (全ラベル 1 pass) |
 | 種別 | span-classification (zero-shot で任意ラベル可) |
-| 訓練データ | NER + classification multi-task corpus |
+| 訓練データ | 実データ 135,698 件 (ニュース/Wikipedia/法律/ArXiv/PubMed) + GPT-4o 合成 118,636 件 |
 | 新 impl 名 (案) | `GLiNER2Detector` |
 
 **選定理由**:
@@ -251,13 +251,16 @@ frontier 上にあり、(b) HF Hub に weights が公開されており、(c) ON
 
 **留意点**:
 
-- GLiNER2 は 2025 年公開で ecosystem が成熟途中。ONNX export パスや
-  Rust 推論サポートは要検証 (`gliner` の ort 推論例は確認済み、GLiNER2
-  はまだ未確認)
+- GLiNER2 は 2025 年公開 (arXiv 2507.18546、fastino-ai/GLiNER2)。ONNX
+  export パスや Rust 推論サポートは GLiNER v1 系では確認済 (`gliner` の
+  ort 推論例)、GLiNER2 はまだ未確認
 - span を返すモデルなので「chunk 全体の yes/no」を取るには「span が 1 つ
   でも検出されたら yes」とラップする必要あり (実装は単純)
-- 訓練分布が英語中心。日本語 chunk への適用は要検証、かつ多言語版の
-  weights が公開されているかライセンス含めて確認 (§ 8 で取り扱う)
+- 訓練分布は英語中心だが多言語版 (`fastino/gliner2-multi-v1`) が公開済。
+  日本語 chunk 適用時は multi 版を採用し、実機品質を要検証
+- 訓練データに GPT-4o 合成データが含まれる。OpenAI ToU 上の論点は
+  上流 (fastino) が Apache-2.0 で公開している時点で完結している扱い
+  (§ 8 ライセンス確認の項参照)
 
 ## 5. 実装計画
 
@@ -451,29 +454,125 @@ GLiNER2 は 2025 年公開のため、以下が未確認:
 
 本計画では **並列維持** を採用する。
 
-## 8. ライセンス確認 (TBD)
+## 8. ライセンス確認
 
-採用モデル 4 つそれぞれについて以下を確認し、本セクションに追記する
-(本 PR 後の follow-up commit で対応):
+採用モデル 4 つについて HF model card / 元論文 / GitHub リポを確認した
+結果、**全て Apache License 2.0 で公開されており tsumugi (Apache-2.0)
+と整合する**。採用 blocker なし。
 
-- [ ] **DistilBART-CNN-6-6** (`sshleifer/distilbart-cnn-6-6`)
-  - HF Hub model card のライセンス記載
-  - 元 BART の Apache 2.0 / MIT 系か
-  - CNN/DM データセットの再配布制約 (二次配布 weights への影響)
-- [ ] **LLMLingua-2-mBERT** (`microsoft/llmlingua-2-bert-base-multilingual-cased-meetingbank`)
-  - Microsoft 公開モデルのライセンス
-  - MeetingBank データセットからの distillation が weights に影響するか
-- [ ] **MiniLM-L6-v2** (`sentence-transformers/all-MiniLM-L6-v2`)
-  - sentence-transformers の Apache 2.0 ライセンス確認
-  - 元 MiniLM (Microsoft) の継承条件
-- [ ] **GLiNER2** (Knowledgator 2025)
-  - 最終 weights 公開先と license
-  - 元 DeBERTa-v3 (MIT? CC?) からの派生条件
-  - GLiNER (v1) との license 継承関係
+| モデル | License | 整合性 | 主な注記 |
+|---|---|---|---|
+| DistilBART-CNN-6-6 | Apache-2.0 | ○ | 問題なし |
+| LLMLingua-2-mBERT | Apache-2.0 | ○ | 元データ MeetingBank が CC BY-NC-ND だが、Microsoft 責任で Apache-2.0 公開済み。tsumugi はデータ自体を再配布せず weights のみ HF Hub 経由で取得 |
+| MiniLM-L6-v2 (sentence-transformers) | Apache-2.0 | ○ | 問題なし |
+| GLiNER2 (`fastino/gliner2-base-v1`) | Apache-2.0 | ○ | 訓練データに GPT-4o 合成データを含むが上流 (fastino) が Apache-2.0 公開済みで責任完結 |
 
-各モデルのライセンスが Apache 2.0 / MIT / BSD / OpenRAIL 等で再配布可能で
-あれば、tsumugi-core の Apache 2.0 (LICENSE) との整合性を `THIRD_PARTY_LICENSES.md`
-に追記する。商用配布制約 (CC BY-NC 等) があるモデルは採用見直し。
+### 8.1 DistilBART-CNN-6-6
+
+- **HF model card**: <https://huggingface.co/sshleifer/distilbart-cnn-6-6>
+  (license タグ `apache-2.0` 明示)
+- **再配布**: 商用 OK。NOTICE / LICENSE 表示と「重要な変更点の明記」が
+  Apache 2.0 標準条件として必要
+- **派生**: copyleft ではないが、再配布 weights には改変有無の表示義務あり
+- **訓練データ**: CNN/DailyMail (Apache-2.0) と XSum (BBC 由来、研究用途
+  想定)。weights の Apache-2.0 配布責任は sshleifer (元 Hugging Face / Meta)
+  が負っている
+- **要対応**: `THIRD_PARTY_LICENSES.md` に「Model: sshleifer/distilbart-cnn-6-6,
+  License: Apache-2.0, Source: HF Hub, Original: facebook/bart-large-cnn
+  distilled by Sam Shleifer」を追記。`download_models.sh` で weights 取得時
+  に Apache-2.0 LICENSE と NOTICE を併せて取得する手順を組み込み
+
+### 8.2 LLMLingua-2-mBERT
+
+- **HF model card**: <https://huggingface.co/microsoft/llmlingua-2-bert-base-multilingual-cased-meetingbank>
+  (license タグ `apache-2.0` 明示)
+- **再配布**: 商用 OK、Apache-2.0 標準
+- **訓練データの注意点**: 元データ MeetingBank は **CC BY-NC-ND 4.0**
+  (NonCommercial, NoDerivatives) であり、データセット単体では商用利用不可。
+  ただし以下の理由で tsumugi として実用上問題なし:
+  1. Microsoft Research が weights を Apache-2.0 として公開 (上流 license
+     判断責任は Microsoft 側に存在)
+  2. 学習済み weights が訓練データの copyright derivative かは法域・解釈
+     次第だが、Microsoft が明示的に Apache-2.0 で出している以上、下流
+     ユーザは Apache-2.0 に従えば足りる
+  3. tsumugi はデータセット自体を再配布せず、weights のみ HF Hub から
+     ダウンロードする方針
+- **要対応**: `THIRD_PARTY_LICENSES.md` に「Weights: Apache-2.0 (Microsoft)」
+  + 「Note: Underlying MeetingBank corpus is CC BY-NC-ND 4.0; tsumugi does
+  not redistribute the corpus, only consumes Microsoft-issued weights」
+  を併記して透明性を担保。法務的に厳密を要する商用利用者には自前
+  fine-tune 可能なよう `PromptCompressor` trait で抽象化済の旨も記載
+
+### 8.3 MiniLM-L6-v2
+
+- **HF model card**: <https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2>
+  (license タグ `apache-2.0` 明示)
+- **再配布**: 商用 OK
+- **派生**: Apache-2.0 標準
+- **訓練データ**: Reddit/S2ORC/Stack Exchange/MS MARCO 等 1B+ ペア。各
+  データセットの license は雑多だが、sentence-transformers チーム
+  (UKP Lab / Hugging Face) が Apache-2.0 で公開済みのため上流責任は完結。
+  SetFit base encoder としての利用は完全に想定範囲内
+- **要対応**: `THIRD_PARTY_LICENSES.md` に「Model:
+  sentence-transformers/all-MiniLM-L6-v2, License: Apache-2.0, Base:
+  nreimers/MiniLM-L6-H384-uncased (Microsoft, MIT)」を追記
+
+### 8.4 GLiNER2 (重要訂正)
+
+調査の過程で **HF org 名が当初想定の `knowledgator/` ではなく
+`fastino/` であることが判明**。Knowledgator は GLiNER v1 系列 (`urchade/`
+および `knowledgator/gliner-*`) のメンテナで、GLiNER2 (Zaratiana et al.,
+2025; arXiv:2507.18546) は **fastino 社からのリリース**である。
+
+- **HF model card**: <https://huggingface.co/fastino/gliner2-base-v1>
+  (license タグ `apache-2.0` 明示)。バリアント:
+  - `fastino/gliner2-base-v1` (default、本計画の採用候補)
+  - `fastino/gliner2-large-v1` (高精度)
+  - `fastino/gliner2-multi-v1` (多言語、日本語適用時の候補)
+- **GitHub**: <https://github.com/fastino-ai/GLiNER2>
+- **再配布**: 商用 OK、Apache-2.0 標準
+- **訓練データの注意点**: 実データ 135,698 件 (ニュース/Wikipedia/法律/
+  ArXiv/PubMed) + **GPT-4o 合成データ 118,636 件**。OpenAI Terms of Use
+  (旧版で「OpenAI と競合するモデル開発に Output を使用しない」条項) の
+  解釈余地はあるが、上流 (fastino) が Apache-2.0 で公開済みのため
+  tsumugi 下流ユーザは fastino の license に従えば足りる
+  (DistilBART / LLMLingua-2 と同じ構図)
+- **要対応**:
+  1. `THIRD_PARTY_LICENSES.md` に「Model: fastino/gliner2-base-v1
+     (or large/multi), License: Apache-2.0, Paper: arXiv:2507.18546,
+     Org: fastino-ai」を追記
+  2. **本計画ドキュメントおよび `docs/TODO.md` の HF org 名を `fastino/`
+     に統一** (本 commit で修正済)
+  3. `benches/scripts/download_models.sh` で GLiNER2 取得時の HF パスを
+     `fastino/gliner2-*` に設定 (実装着手時に対応)
+
+### 8.5 フォールバック判断
+
+- **GLiNER2 weights は HF Hub に公開済**で fastino org に複数バリアントあり、
+  ダウンロード数も実用レベル。**フォールバック不要、計画変更不要**
+- 仮に将来 fastino が weights を非公開化または license 変更した場合の
+  代替経路:
+  - **(a) Knowledgator GLiNER v1** (`knowledgator/gliner-bi-large-v2.0`
+    等、Apache-2.0): 同じ span-classification API で event detection 用途
+    には十分機能
+  - **(b) DeBERTa-v3-base + 自前 fine-tune** (GLiNER の base は元々
+    DeBERTa-v3-base): MIT license、自由度最大だが fine-tune コスト発生
+
+### 8.6 全体の `THIRD_PARTY_LICENSES.md` 更新方針
+
+実装着手時 (各モデルの impl PR と並行) に以下を `THIRD_PARTY_LICENSES.md`
+に追記:
+
+```markdown
+## Model Weights (downloaded at run-time)
+
+| Model | License | Source | Notes |
+|---|---|---|---|
+| DistilBART-CNN-6-6 | Apache-2.0 | HF: sshleifer/distilbart-cnn-6-6 | — |
+| LLMLingua-2-mBERT | Apache-2.0 | HF: microsoft/llmlingua-2-bert-base-multilingual-cased-meetingbank | Underlying MeetingBank corpus is CC BY-NC-ND 4.0; weights are Microsoft-issued under Apache-2.0 |
+| MiniLM-L6-v2 | Apache-2.0 | HF: sentence-transformers/all-MiniLM-L6-v2 | — |
+| GLiNER2 | Apache-2.0 | HF: fastino/gliner2-base-v1 | Training data includes GPT-4o synthesized samples; weights are fastino-issued under Apache-2.0 |
+```
 
 ## 9. 進捗管理
 
