@@ -24,6 +24,8 @@ use crate::suite::SuiteRunOptions;
 #[cfg(feature = "network")]
 use crate::metrics::{substring_match, CaseMetric};
 #[cfg(feature = "network")]
+use crate::report::IncrementalSectionWriter;
+#[cfg(feature = "network")]
 use crate::suite::Ablation;
 #[cfg(feature = "network")]
 use tsumugi_core::providers::OpenAiCompatibleProvider;
@@ -222,7 +224,8 @@ async fn run_niah_s_inner(opts: &SuiteRunOptions) -> anyhow::Result<SectionRepor
     );
 
     let provider = OpenAiCompatibleProvider::new(&opts.llm_base_url, &opts.llm_model);
-    let mut metrics = Vec::with_capacity(cases.len());
+    let mut writer =
+        IncrementalSectionWriter::create(&opts.output_dir, "ruler-niah-s", Ablation::Full)?;
     let total = cases.len();
     for (idx, case) in cases.iter().enumerate() {
         eprintln!(
@@ -268,15 +271,15 @@ async fn run_niah_s_inner(opts: &SuiteRunOptions) -> anyhow::Result<SectionRepor
             response_preview,
             reasoning_preview
         );
-        metrics.push(CaseMetric {
+        writer.write_case(CaseMetric {
             case_id: case.case_id.clone(),
             correct,
             latency_ms,
             prompt_tokens: resp.prompt_tokens,
             completion_tokens: resp.completion_tokens,
-        });
+        })?;
     }
-    Ok(SectionReport::new("ruler-niah-s", Ablation::Full, metrics))
+    Ok(writer.finish())
 }
 
 #[cfg(not(feature = "network"))]
@@ -367,10 +370,10 @@ mod network_tests {
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    fn opts_for(server_uri: String) -> SuiteRunOptions {
+    fn opts_for(server_uri: String, output_dir: PathBuf) -> SuiteRunOptions {
         SuiteRunOptions {
             suite: Suite::Smoke,
-            output_dir: PathBuf::from("/tmp/ignored"),
+            output_dir,
             llm_base_url: server_uri,
             llm_model: "qwen3.5-4b".into(),
             help: false,
@@ -399,7 +402,8 @@ mod network_tests {
             .mount(&server)
             .await;
 
-        let opts = opts_for(server.uri());
+        let tmp = tempfile::tempdir().unwrap();
+        let opts = opts_for(server.uri(), tmp.path().to_path_buf());
         let report = run_niah_s_inner(&opts).await.expect("run");
         assert_eq!(report.bench, "ruler-niah-s");
         assert_eq!(report.ablation, "full");
@@ -419,7 +423,8 @@ mod network_tests {
             .respond_with(ResponseTemplate::new(500))
             .mount(&server)
             .await;
-        let opts = opts_for(server.uri());
+        let tmp = tempfile::tempdir().unwrap();
+        let opts = opts_for(server.uri(), tmp.path().to_path_buf());
         let err = run_niah_s_inner(&opts).await.unwrap_err();
         assert!(err.to_string().contains("500"), "got: {err}");
     }
