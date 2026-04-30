@@ -112,7 +112,7 @@ fn load_state(
     if past_input_names.is_empty() {
         anyhow::bail!(
             "decoder_with_past graph has no `past_key_values.*` inputs — \
-             was the model exported with `--task summarization-with-past`?"
+             was the model exported with `--task text2text-generation-with-past`?"
         );
     }
 

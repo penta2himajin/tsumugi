@@ -146,9 +146,10 @@ jobs:
 
       - name: Export + resolve DistilBART paths
         # Phase 4-γ Step 5: optimum-cli で `sshleifer/distilbart-cnn-6-6` を
-        # `summarization-with-past` task で ONNX export し、`TSUMUGI_DISTILBART_DIR`
-        # を $GITHUB_ENV に流し込む。`DistilBartSummarizer::from_dir` がこのディレクトリ
-        # 配下の `encoder_model.onnx` / `decoder_model.onnx` /
+        # `text2text-generation-with-past` task で ONNX export し、
+        # `TSUMUGI_DISTILBART_DIR` を $GITHUB_ENV に流し込む。
+        # `DistilBartSummarizer::from_dir` がこのディレクトリ配下の
+        # `encoder_model.onnx` / `decoder_model.onnx` /
         # `decoder_with_past_model.onnx` / `tokenizer.json` を読む。
         run: ./benches/scripts/download_distilbart.sh >> "$GITHUB_ENV"
 

@@ -171,7 +171,7 @@
 - [x] **DistilBART 実装** (`Summarizer`、PR、2026-04-30):
       `tsumugi-core/src/summarizer/distilbart/{mod.rs,inference.rs}` 新設、
       `DistilBartSummarizer` を encoder + decoder + decoder_with_past の
-      3 ONNX graph 構成で実装。Optimum の `summarization-with-past` task
+      3 ONNX graph 構成で実装。Optimum の `text2text-generation-with-past` task
       export を直接食う。greedy 生成 loop + KV cache reuse
       (past_key_values.* スロットを動的に発見、layer 数に依存しない実装)
       で各 step O(1) attn cost。`min_output_length` で EOS 抑止、
@@ -180,7 +180,7 @@
       新設 (`models/tsumugi/core.als` に `one sig DistilBart extends
       SummaryMethod {}` を追加して `scripts/regen.sh` で再生成)。
       bench infra: `benches/scripts/download_distilbart.sh`
-      (`optimum-cli export onnx --task summarization-with-past`)、
+      (`optimum-cli export onnx --task text2text-generation-with-past`)、
       `bench.yml` に `actions/cache@v4` + `$GITHUB_ENV` 経由の
       `TSUMUGI_DISTILBART_DIR` 配線
 

@@ -125,7 +125,7 @@
 
 - HF: `sshleifer/distilbart-cnn-6-6`
 - ONNX: HF Hub にネイティブ ONNX 配布なし。CI 内で
-  `optimum-cli export onnx --task summarization-with-past` 経由で 3 ONNX
+  `optimum-cli export onnx --task text2text-generation-with-past` 経由で 3 ONNX
   graph (encoder / decoder / decoder_with_past) を都度 export し、
   `~/.cache/tsumugi/distilbart-cnn-6-6/` に出力する
   (`benches/scripts/download_distilbart.sh`)。export 結果は

@@ -8,11 +8,17 @@
 #
 # Why export here instead of pulling pre-built ONNX from HF Hub?
 # Sam Shleifer's `sshleifer/distilbart-cnn-6-6` ships PyTorch weights
-# only. Optimum's `summarization-with-past` task exports three ONNX
-# graphs (encoder, decoder, decoder-with-past) so we can run greedy
+# only. Optimum's `text2text-generation-with-past` task exports three
+# ONNX graphs (encoder, decoder, decoder-with-past) so we can run greedy
 # generation with KV cache reuse, which is mandatory for sub-second
 # CPU summaries on 1K-tok inputs (without KV cache the decoder loop
 # is O(n²) re-attending the encoder hidden states each step).
+#
+# Note: `summarization-with-past` is NOT a valid Optimum task for BART
+# (Optimum only ships the canonical `text2text-generation-with-past`
+# task for encoder-decoder graphs). The two produce identical ONNX
+# topology — the difference is purely the task label Optimum uses to
+# pick the export config.
 #
 # 出力先 default: `${HOME}/.cache/tsumugi/distilbart-cnn-6-6/`
 #   ├── encoder_model.onnx
@@ -57,12 +63,16 @@ else
   fi
 
   echo "Exporting ${DISTILBART_REPO} -> ${DISTILBART_DIR}" >&2
-  # `--task summarization-with-past` で encoder + decoder + decoder-with-past
-  # の 3 ONNX graph を出力する。auto detect は abstractive task に対して
-  # 信頼が低いため明示。
+  # `--task text2text-generation-with-past` で encoder + decoder +
+  # decoder-with-past の 3 ONNX graph を出力する。BART は Optimum 上
+  # `text2text-generation` (encoder-decoder) として扱われ、
+  # `summarization-with-past` という task 名は未サポート (Optimum
+  # 1.20+ でも同じ)。`-with-past` suffix が KV cache 入出力を graph に
+  # 含めるためのフラグ。auto detect は config.json の architectures に
+  # `BartForConditionalGeneration` が入っていれば正しく当たるが明示。
   optimum-cli export onnx \
     --model "${DISTILBART_REPO}" \
-    --task summarization-with-past \
+    --task text2text-generation-with-past \
     "${DISTILBART_DIR}" >&2
 
   echo "Done. Files in ${DISTILBART_DIR}:" >&2
