@@ -1,8 +1,8 @@
 //! DistilBartSummarizer — paper-faithful encoder-decoder abstractive
 //! summarizer for the LLM-free stack (Phase 4-γ Step 5).
 //!
-//! Wraps a HuggingFace Optimum `summarization-with-past` ONNX export of
-//! `sshleifer/distilbart-cnn-6-6` (or any compatible BART-family
+//! Wraps a HuggingFace Optimum `text2text-generation-with-past` ONNX
+//! export of `sshleifer/distilbart-cnn-6-6` (or any compatible BART-family
 //! checkpoint) and runs greedy generation with KV-cache reuse:
 //!
 //! 1. **Encoder forward** (1 pass): tokenize input → run `encoder_model.onnx`
@@ -21,7 +21,7 @@
 //!
 //! ### Why three ONNX graphs
 //!
-//! Optimum's `summarization-with-past` task emits three graphs because
+//! Optimum's `text2text-generation-with-past` task emits three graphs because
 //! the decoder's initial step has no `past_key_values` to take as input
 //! (different graph topology), while subsequent steps consume the prior
 //! step's `present.*` outputs as `past_key_values.*` inputs. Conflating
@@ -130,7 +130,7 @@ struct InferenceState {
 
 impl DistilBartSummarizer {
     /// Construct a summarizer from the four files Optimum's
-    /// `summarization-with-past` export produces.
+    /// `text2text-generation-with-past` export produces.
     pub fn new(
         encoder_path: impl Into<PathBuf>,
         decoder_path: impl Into<PathBuf>,
