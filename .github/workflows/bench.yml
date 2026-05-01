@@ -3,13 +3,21 @@ name: Bench
 # tsumugi の encoder-only ベンチ。
 #
 # 構成:
-# - **PR**: cr suite × tier-0-1-2 のみを実行 (~5 min)。`main` の最後の
-#   bench snapshot とのレグレッション比較。snapshot に PASS で記録された
-#   case が PR で FAIL に転じたら job を fail させる。
+# - **PR**: `cr` suite × `tier-0-1-2` ablation で固定実行 (~5 min)。`main`
+#   の最後の bench snapshot とのレグレッション比較。snapshot に PASS で
+#   記録された case が PR で FAIL に転じたら job を fail させる。
 # - **push to main**: 同じ bench を実行し、結果を snapshot として cache
 #   に保存。次回以降の PR がこの snapshot を比較対象にする。
-# - **workflow_dispatch**: 手動。任意の suite / ablation を選択可能で、
-#   nightly 観測 / 詳細評価のための逃げ道。
+# - **workflow_dispatch**: 手動。`all` suite (smoke + oracle + cr の 43
+#   ケース) を全 ablation で回す。唯一の knob は `ablations` で、デフォルト
+#   は 3 構成すべて (~25-30 min)。tier 部分集合だけ見たい時は CSV で絞れる。
+#
+# 設計指針: PR では「変更が壊していないか」だけを最短で見るため scope を
+# 固定し、dispatch は「全体ベースラインを取り直す」用途に専念する。
+# suite 切替や per_type 等の細かい knob は廃止し、ablation だけを唯一の
+# 可変軸として残した (元々あった `--suite` / `LONGMEMEVAL_PER_TYPE` 等の
+# CLI/env は runner 側に残っているので、CI を経由しない手動実行では引き
+# 続き使える)。
 #
 # LLM 関連の step (llama.cpp install / start / health / Qwen GGUF
 # download) は LLM 削除と共に廃止。`Suite::Health` と `Ablation::Full`
@@ -20,26 +28,6 @@ name: Bench
 on:
   workflow_dispatch:
     inputs:
-      suite:
-        description: 'Benchmark suite'
-        required: true
-        type: choice
-        options:
-          - smoke
-          - oracle
-          - cr
-          - all
-        default: cr
-      longmemeval_per_type:
-        description: 'oracle: questions per type (1=6 fast, 5=30 full)'
-        required: false
-        type: string
-        default: '5'
-      ruler_seq_lengths:
-        description: 'smoke (RULER NIAH-S): seq_lengths CSV'
-        required: false
-        type: string
-        default: '2048,4096,8192,12288'
       ablations:
         description: 'Tier ablation set CSV (tier-0|tier-0-1|tier-0-1-2)'
         required: false
@@ -64,8 +52,8 @@ jobs:
   bench:
     name: bench
     runs-on: ubuntu-latest
-    # cr × tier-0-1-2 で ~5 min、workflow_dispatch の oracle full まで
-    # 含めても 30 min 程度なので timeout 30 min。
+    # PR は cr × tier-0-1-2 で ~5 min、dispatch の all × 3 ablations で
+    # も 30 min 程度なので timeout 30 min。
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -97,19 +85,27 @@ jobs:
           key: distilbart-v1-${{ hashFiles('benches/scripts/download_distilbart.sh') }}
 
       - name: Determine effective inputs
-        # `pull_request` / `push` triggers では `inputs.*` が undefined。
-        # 既定値を bash で導出する。
+        # PR/push は scope 固定、dispatch は ablations だけ受け取って残りは
+        # ハードコード。suite 切替・per_type・seq_lengths の knob は廃止
+        # 済 (頭の comment 参照)。`lme_per_type` / `ruler_seq` は dispatch
+        # の `all` でしか参照されないが、env 名は runner 側で再利用される
+        # ので両 path で出力しておく。
         id: cfg
         run: |
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            echo "suite=${{ inputs.suite }}" >> "$GITHUB_OUTPUT"
+            # 手動 dispatch: 全 suite (smoke + oracle + cr) × 指定 ablations。
+            echo "suite=all" >> "$GITHUB_OUTPUT"
             echo "ablations=${{ inputs.ablations }}" >> "$GITHUB_OUTPUT"
-            echo "lme_per_type=${{ inputs.longmemeval_per_type }}" >> "$GITHUB_OUTPUT"
-            echo "ruler_seq=${{ inputs.ruler_seq_lengths }}" >> "$GITHUB_OUTPUT"
+            # oracle は 6 question_type × 5 問 = 30 問の full 母集団で
+            # statistical power を確保する。
+            echo "lme_per_type=5" >> "$GITHUB_OUTPUT"
+            echo "ruler_seq=2048,4096,8192,12288" >> "$GITHUB_OUTPUT"
           else
             # PR / push to main: cr × tier-0-1-2 固定 (snapshot regression
             # check の母集団)。tier-0-1-2 は OnnxEmbedding + LlmLingua2
             # の両方を経由する最重 path で、breakage がここで検出できる。
+            # cr は LongMemEval / RULER を消費しないので lme_per_type /
+            # ruler_seq の値はどちらも実際には使われない (互換用に出力)。
             echo "suite=cr" >> "$GITHUB_OUTPUT"
             echo "ablations=tier-0-1-2" >> "$GITHUB_OUTPUT"
             echo "lme_per_type=1" >> "$GITHUB_OUTPUT"
