@@ -39,29 +39,17 @@
 
 ---
 
-## LLM 候補 (Phase 4-α Step 1 smoke test 後に 1 つに確定)
+## ~~LLM~~ — **削除済 (2026-04)**
 
-### A. Qwen3.5-4B (text-only)
+tsumugi は 2026-04 に autoregressive LLM 呼び出しを完全撤去し、
+encoder-only スタックに確定した。`Qwen3.5-4B` / `unsloth/Qwen3.5-4B-GGUF`
+/ `google/gemma-4-e4b-it` 等の LLM weights、および llama.cpp ランタイムは
+本リポジトリの依存対象外となった。詳細は `docs/llm-free-stack-plan.md`
+§ 5.3。
 
-- 公式モデル: `Qwen/Qwen3.5-4B` (safetensors 配布、Apache 2.0)
-- GGUF 配布: `unsloth/Qwen3.5-4B-GGUF` (community quantization)
-  - 取得 quant: `Qwen3.5-4B-Q4_K_M.gguf`
-  - revision SHA: TBD (Step 1 smoke 安定後に pin)
-  - License: 公式モデルから継承する Apache 2.0
-- License: **Apache 2.0** (HF model card で 2026-04-28 に確認)
-- 備考: Multimodal VL モデルだが mmproj 非ロードで text-only 動作可能。
-  Hybrid Gated DeltaNet + Gated Attention + sparse MoE のため
-  llama.cpp は最新 master 系の build を pin する必要あり。
-  公式 Qwen org からは GGUF 配布が無い (2026-04 時点)、`unsloth` の
-  community 配布を使用している。Qwen 公式 GGUF が後日公開された場合は
-  そちらに切り替える。
-
-### B. Gemma 4 E4B-it
-
-- HF: `google/gemma-4-e4b-it`
-- GGUF (Q4_K_M / UD-Q4_K_XL): `unsloth/gemma-4-E4B-it-GGUF` または ggml-org 配布
-- License: **Apache 2.0** (2026-03 に Gemma Terms から変更、Google Open Source Blog 確認)
-- 備考: Day-0 llama.cpp 公式サポート、CPU 推論実績豊富。
+下流製品が LLM を使う場合、その製品自身が任意の LLM ランタイム
+(Ollama / LM Studio / llama.cpp / OpenAI API / Anthropic API 等) と
+ライセンスを管理する。tsumugi はそのブリッジを提供しない。
 
 ---
 
@@ -144,15 +132,23 @@
 
 ## ランタイム / バイナリ
 
-### llama.cpp
-
-- リポジトリ: <https://github.com/ggml-org/llama.cpp>
-- License: MIT
-- 利用形態: CI で release バイナリを download、tag は smoke test 後に pin。
-
 ### ort (Rust ONNX Runtime バインディング)
 
-- crate: `ort`
+- crate: `ort` (=2.0.0-rc.10)
 - License: MIT / Apache 2.0 dual
-- 利用形態: `tsumugi-core` の `onnx` feature 経由で `OnnxEmbedding` から呼ぶ。
-  Phase 4-α Step 1 では trait 面のみ先行追加、ort 統合は並行で進む。
+- 利用形態: `tsumugi-core` の `onnx` feature 経由で `OnnxEmbedding` /
+  `LlmLingua2Compressor` / `SetFitClassifier` / `NliZeroShotDetector` /
+  `DistilBartSummarizer` がすべての ONNX 推論を ort で実行。
+  `download-binaries` feature で ONNX Runtime バイナリを実行時 download。
+
+### tokenizers (Hugging Face Rust tokenizers)
+
+- crate: `tokenizers` (0.21)
+- License: Apache 2.0
+- 利用形態: ort と組み合わせて `onnx` feature 配下の各 encoder-only impl
+  で BERT/XLM-R/SentencePiece tokenizer を実行。
+
+### llama.cpp — **削除済 (2026-04)**
+
+LLM 撤去と同時に CI からも除外。bench は `llama-server` を起動せず、
+encoder-only ONNX 推論のみで完結する。

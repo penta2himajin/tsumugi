@@ -8,9 +8,8 @@
 - テスト: Rust の `#[test]` + 結合テスト、TypeScript の vitest (SDK 段階)
 - 日本語トークナイザ: `JapaneseCharTokenizer` (dict-free、script-run + Han bi-gram) が default。lindera 統合は build-time dict 配布方式の整理を待って Phase 3 で再着手
 - 永続化: `InMemoryStorage` (default) / `SqliteStorage` (`sqlite` feature、sqlx ベース)。sqlite-vec 統合は Phase 3 以降で性能プロファイル取得後
-- HTTP providers: `OpenAiCompatibleProvider` / `LmStudioEmbedding` が `network` feature で reqwest 配線。feature off 時は type-surface stub のみ (明示的エラー) で Mock に fallback できる
-
-推論ランタイム (上位製品での想定): Ollama (Apple Silicon で MLX バックエンド、2026-03〜) / LM Studio / llama.cpp。`LLMProvider` trait は OpenAI 互換 API をまず実装し、Ollama / LM Studio の両方を単一実装でカバーする。
+- ML runtime: ort 2.0.0-rc.10 (ONNX Runtime Rust binding) + tokenizers 0.21 を `onnx` feature で統合。CPU only で動作、GPU 拡張は将来の opt-in feature 候補
+- LLM client: **無し** (2026-04 削除)。tsumugi は autoregressive LLM API を呼ばない。LLM を必要とするユースケースはダウンストリームの application 層が直接ブリッジする
 
 ハードウェア帯域別の推奨モデルは `docs/runtime-environment.md` を参照。調査背景は `docs/research/2026-04-model-landscape.md` と `docs/research/context-management-survey.md` を参照。
 
@@ -21,7 +20,7 @@ tsumugi/
 ├── tsumugi-core/        # コアライブラリ (Rust crate)
 │   ├── src/
 │   │   ├── domain/      # ドメイン非依存の型 (Chunk, Fact, PendingItem, SourceLocation)
-│   │   ├── traits/      # 9 種の trait
+│   │   ├── traits/      # 8 種の trait
 │   │   ├── retriever/   # BM25 + cosine hybrid
 │   │   ├── scorer/      # RelevanceScorer 実装群
 │   │   ├── detector/    # EventDetector 実装群
@@ -32,10 +31,13 @@ tsumugi/
 │   └── tests/           # 結合テスト
 ├── tsumugi-cli/         # 開発・検証用 REPL (Rust binary)
 ├── tsumugi-ts/          # TypeScript SDK (Tauri frontend を主用途、Node/Bun server も可)
-└── models/              # Alloy ソース (oxidtr 入力、multi-file 形式)
-    ├── tsumugi.als      # main (module tsumugi; open tsumugi/core)
-    └── tsumugi/
-        └── core.als     # module tsumugi/core
+├── benches/             # CI ベンチランナー + ONNX export スクリプト
+├── models/              # Alloy ソース + 同梱 encoder weights
+│   ├── tsumugi.als      # main (module tsumugi; open tsumugi/core)
+│   ├── tsumugi/core.als # module tsumugi/core
+│   ├── setfit/          # 同梱 SetFit head (ONNX は LFS)
+│   └── setfit-training/ # 訓練データ + 再現手順
+└── scripts/             # regen.sh (oxidtr) / train_setfit.py / etc.
 ```
 
 ### Feature flag 方針
@@ -45,9 +47,10 @@ tsumugi/
 ```toml
 [features]
 default = []
-network = ["dep:reqwest"]   # OpenAI 互換 / LM Studio HTTP プロバイダ
-sqlite  = ["dep:sqlx"]      # SqliteStorage (sqlx ベース)
-onnx    = []                # OnnxEmbedding (ort 統合は段階実装)
+sqlite  = ["dep:sqlx"]                                 # SqliteStorage (sqlx ベース)
+onnx    = ["dep:ort", "dep:tokenizers",                # encoder-only impls
+           "dep:ndarray", "dep:tokio"]                 # (OnnxEmbedding, LlmLingua2,
+                                                       #  SetFit, NliZeroShot, DistilBart)
 ```
 
 ドメイン固有の型 (Character / Scene / 業務 Ticket 等) は tsumugi 本体には含めず、ダウンストリームのアプリケーション crate で実装する。
@@ -111,7 +114,7 @@ onnx    = []                # OnnxEmbedding (ort 統合は段階実装)
 [CompiledContext] ────→ [Product: 最終プロンプト組み立てと LLM 呼び出し]
 ```
 
-**重要**: このパスに `LLMProvider` は登場しない。最終生成は製品の責務。Tier 2-3 の `PromptCompressor` / `Summarizer` は内部で LLM を使うことがあるが、主処理パス (Tier 0-1) はすべて LLM 非依存で動く。
+**重要**: tsumugi 内部に autoregressive LLM 呼び出しは無い (2026-04 撤去)。最終プロンプト組み立てと LLM への送信は製品 (downstream application) の責務。tsumugi が提供するのは context まで。Tier 2 の `PromptCompressor` / `Summarizer` も encoder-only な ONNX 推論で完結する。
 
 ### パス 3: 要約 (非同期別パス)
 
@@ -124,7 +127,7 @@ onnx    = []                # OnnxEmbedding (ort 統合は段階実装)
   ・schedule (バックグラウンド)
         ↓
 [Summarizer (trait)]
-  ・SummaryMethod 選択 (LlmFull / LlmLingua2 / SelectiveContext / ExtractiveBM25 / UserManual)
+  ・SummaryMethod 選択 (LlmLingua2 / SelectiveContext / ExtractiveBM25 / DistilBart / UserManual)
   ・SummaryLevel は u32 (0 = Raw、正数が抽象度)
         ↓
 [Chunk.summary / summary_level / summary_method 更新]
@@ -136,21 +139,20 @@ onnx    = []                # OnnxEmbedding (ort 統合は段階実装)
 
 ---
 
-## 4-tier 処理階層
+## 3-tier 処理階層 (encoder-only)
 
 | Tier | 粒度 | コスト目安 | 該当コンポーネント (例) |
 |---|---|---|---|
 | Tier 0 | 決定論 | μs 〜 ms | 正規表現、完全一致、BM25、階層走査、時間窓、supersession フィルタ |
-| Tier 1 | CPU 軽量 | 数 ms | 小型 embedding (MiniLM / BGE-small)、BERT 分類器、IKE 二値化 |
-| Tier 2 | GPU 中量 | 数十 ms | LLMLingua-2 圧縮、embedding 再ランク、軽量 LLM yes/no |
-| Tier 3 | LLM フル | 数百 ms〜 | 階層要約生成、最終裁定抽出、最終生成 |
+| Tier 1 | CPU 軽量 encoder | 数 ms | 小型 embedding (MiniLM-L6 / e5-small / BGE-small)、SetFit 分類器、IKE 二値化 |
+| Tier 2 | CPU 中量 encoder | 数十 ms 〜 数秒 | LLMLingua-2 token-level 圧縮、mDeBERTa-XNLI zero-shot 検出、DistilBART abstractive 要約 |
 
 **帰結**:
 
 - `Retriever` / `Scorer` / `QueryClassifier` の主系列は Tier 0-1
-- `PromptCompressor` / `Summarizer` は Tier 2-3
-- `EventDetector` は cascade で Tier 0 → 3 を段階評価
-- `LLMProvider` は core の主処理パスから外れ、製品の最終生成と、一部 trait 実装 (Summarizer / LLMClassifierDetector 等) の内部呼び出しに限定
+- `PromptCompressor` / `Summarizer` / `EventDetector` は Tier 2 (encoder-only ONNX 推論)
+- `EventDetector` の cascade は Tier 0 (KeywordDetector) → Tier 1 (EmbeddingSimilarityDetector) → Tier 2 (NliZeroShotDetector) の 3 段
+- **autoregressive LLM 呼び出しは tsumugi に存在しない** (2026-04 撤去)。最終生成 / 質問応答が必要なユースケースは、tsumugi が組み立てた context をダウンストリームの application 層が任意の LLM に送る前提
 
 ---
 
@@ -343,80 +345,11 @@ pub trait StorageProvider: Send + Sync {
 
 デフォルト実装: `InMemoryStorage` (Phase 1)、`SqliteStorage` (Phase 2)
 
-### LLMProvider
+### LLMProvider — **撤去 (2026-04)**
 
-LLM 呼び出しの抽象。OpenAI 互換 API を第一実装に据えることで、Ollama / LM Studio / llama.cpp server の**すべてを単一実装でカバー**する。
+`LLMProvider` trait と紐づく `OpenAiCompatibleProvider` / `MockLLMProvider` 各実装は 2026-04 の LLM 削除で削除された。tsumugi 内部に autoregressive LLM 呼び出しは存在しない。
 
-> core の主処理パス (Tier 0-1) からは LLMProvider は呼ばれない。最終生成は製品の責務であり、core 内部では `LLMClassifierDetector` / `Summarizer` 等の Tier 2-3 実装が任意で利用する。
-
-```rust
-pub trait LLMProvider: Send + Sync {
-    async fn complete(&self, req: LLMRequest) -> Result<LLMResponse>;
-    async fn stream(&self, req: LLMRequest) -> Result<BoxStream<LLMChunk>>;
-    fn metadata(&self) -> &ModelMetadata;
-}
-
-pub struct LLMRequest {
-    pub messages: Vec<Message>,
-    pub max_tokens: Option<u32>,
-    pub temperature: Option<f32>,
-    pub top_p: Option<f32>,
-    pub stop: Vec<String>,
-    pub grammar: Option<GrammarSpec>,      // 構造化出力制約
-    pub tools: Vec<ToolSpec>,              // tool calling / function calling
-    pub response_format: Option<ResponseFormat>, // json_mode / text
-    pub kv_cache_quantization: Option<KvCacheQuant>,
-}
-
-pub enum GrammarSpec {
-    Gbnf(String),                          // llama.cpp GBNF (第一選択、移植性高)
-    JsonSchema(serde_json::Value),         // JSON Schema → 各ランタイムで変換
-    Regex(String),                         // 簡易制約
-}
-```
-
-#### ModelMetadata
-
-```rust
-pub struct ModelMetadata {
-    pub name: String,                      // "qwen3-swallow-8b"
-    pub family: ModelFamily,
-    pub parameters_total: u64,
-    pub parameters_active: Option<u64>,    // MoE なら active、dense なら None
-    pub quantization: QuantizationLevel,
-    pub context_window: u32,
-    pub supports_tools: bool,
-    pub supports_json_mode: bool,
-    pub supports_grammar: bool,
-    pub language_focus: Vec<LanguageCode>,
-}
-
-pub enum QuantizationLevel {
-    Fp16, Fp8, Int8, Int6, Int5, Int4, Int3, Int2,
-    Ternary, OneBit, Unknown,
-}
-
-pub enum ModelFamily {
-    Qwen3, Qwen35, Qwen36,
-    Gemma3, Gemma4,
-    Llama3, Llama4,
-    Mistral, Mixtral,
-    Phi4,
-    Swallow, Elyza, Bonsai,
-    GptOss, GlmV5, KimiK, DeepseekV3,
-    Other(String),
-}
-
-pub enum KvCacheQuant {
-    None, Q8, Q5, Q4, MlxTurboQuant,
-}
-```
-
-#### リファレンス実装
-
-- `OpenAICompatibleProvider` — Ollama / LM Studio / llama.cpp server を包括
-- `MockLLMProvider` — テスト用、固定レスポンス
-- (将来) `AnthropicProvider`, `CloudflareWorkersAIProvider` 等
+ダウンストリーム製品が LLM を使う場合、tsumugi が組み立てた context (`CompiledContext`) を製品自身の LLM クライアント (Ollama / LM Studio / llama.cpp / OpenAI / Anthropic API 等) に流し込む。tsumugi はそのブリッジを提供しない。
 
 ### EmbeddingProvider
 
@@ -428,7 +361,10 @@ pub trait EmbeddingProvider: Send + Sync {
 }
 ```
 
-リファレンス実装: `MockEmbeddingProvider` / `LMStudioEmbeddingProvider` / `OllamaEmbeddingProvider`
+リファレンス実装:
+- `MockEmbedding` — deterministic FNV-1a hash、test 用 (default features で利用可)
+- `OnnxEmbedding` — ort + tokenizers 経由で sentence-transformers 系 ONNX を実行、`onnx` feature 配下
+- `IkeEmbedding` — 任意の `EmbeddingProvider` を bit packing して二値化する wrapper
 
 ### Retriever
 
@@ -490,8 +426,8 @@ pub trait EventDetector: Send + Sync {
 
 - `KeywordDetector` (Tier 0) — 文字列完全一致、即応、コスト 0
 - `EmbeddingSimilarityDetector` (Tier 1) — top-K 意味類似
-- `LLMClassifierDetector` (Tier 2-3) — 軽量 LLM による yes/no 判定
-- `CascadeDetector` — Keyword → Embedding → LLM の 3 段カスケード
+- `NliZeroShotDetector` (Tier 2) — mDeBERTa-XNLI による zero-shot entailment 判定 (encoder-only、ONNX 推論)
+- `CascadeDetector` — Keyword → Embedding → NLI の 3 段カスケード
 
 ### QueryClassifier ★新
 
@@ -514,8 +450,8 @@ pub enum QueryType {
 
 同梱実装:
 
-- `RegexClassifier` (Tier 0) — Phase 1 実装
-- (将来) `BertClassifier` (Tier 1) — Phase 3 で MiniLM / ModernBERT ベース
+- `RegexClassifier` (Tier 0) — 規則ベース。SelRoute paper の主手法に対応
+- `SetFitClassifier` (Tier 1) — sentence-transformers MiniLM-L6 + 線形 head (SetFit + few-shot)、ONNX 推論。`models/setfit/all-MiniLM-L6-v2-default.{onnx,tokenizer.json,head.json}` で 4 ラベル × 16 例の英語 head を同梱。`with_embedder` で multilingual encoder にも差し替え可
 
 ### PromptCompressor ★新
 
@@ -555,9 +491,9 @@ pub struct SummarizerOutput {
 
 同梱実装:
 
-- `ExtractiveBM25Summarizer` (Tier 1) — Phase 2 最小実装
-- (将来) `LlmSummarizer` (Tier 3) — Phase 2
-- (将来) `HierarchicalSummarizer` — 複数 Summarizer を組み合わせて level ごとに手法を切替 (Phase 2-3)
+- `ExtractiveBM25Summarizer` (Tier 1) — 上位 N 文を抽出する extractive 要約
+- `DistilBartSummarizer` (Tier 2) — encoder-decoder abstractive 要約、`sshleifer/distilbart-cnn-6-6` ONNX (3 graph: encoder + decoder + decoder_with_past) を greedy + KV cache reuse で実行
+- `HierarchicalSummarizer` — 複数 Summarizer を組み合わせて level ごとに手法を切替 (例: level 1 で extractive、level 3 で DistilBART)
 
 ---
 
