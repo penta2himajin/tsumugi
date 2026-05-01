@@ -11,13 +11,16 @@
 | Phase 2 | 技術タスク (`SqliteStorage` / HTTP-backed providers / 日本語 tokenizer / 拡張 trait 群: `LlmSummarizer` / `HierarchicalSummarizer` / `LlmLinguaCompressor` / `SelectiveContextCompressor`) | 2026-04-23 |
 | Phase 3 | TypeScript SDK (`tsumugi-ts/`、subpath export `tsumugi` / `tsumugi/tauri` / `tsumugi/gen`、Tauri IPC ヘルパー、20 vitest tests) + 拡張 trait (`BertClassifier` LLM-delegation 近似、`IkeEmbeddingProvider`) + CI / 再生成 | 2026-04-23 |
 | 公開準備 | Apache-2.0 LICENSE + 関連製品依存の削除 + `creative` feature 廃止による汎用メモリレイヤー化 | 2026-04-29 |
+| **Phase 4-γ: encoder-only stack** | **`OnnxEmbedding` (PR #32) → `LlmLingua2Compressor` + chunking fix (PR #33/#34) → `SetFitClassifier` (PR #35) → `NliZeroShotDetector` (PR #36) → `DistilBartSummarizer` (PR #37/#38)** | 2026-04-30 |
+| **LLM 削除 + bench CI 整備** | **PR #39 で `LLMProvider` trait 撤去、bench は cr × tier-0-1-2 を PR CI で snapshot regression check / PR #40 で SetFit デフォルト head 同梱 (英語 64 例で訓練)** | 2026-04-30 |
 
 未着手の Phase 1-3 持ち越し:
 
 - [ ] oxidtr scaffolding の再評価 (helpers の transitive closure walker、fixtures 等を選択的に wire するか)
-- [ ] BertClassifier の paper-exact 実装 (candle / ort 統合 + MiniLM / ModernBERT 重み配布)
 - [ ] IkeEmbedding の `u64` bit packing 最適化 (retrieval hot path でメモリと SIMD を活用)
 - [ ] Tauri プラグイン crate の追加 (現状はダウンストリームで `#[tauri::command]` を手動定義する前提)
+- [ ] SetFit デフォルト head の ONNX (~86 MB、LFS) を main に commit (PR #40 で Claude Code 環境の git proxy 制約により未 commit)
+- [ ] 多言語 SetFit head の生成 + 同梱 (`paraphrase-multilingual-MiniLM-L12-v2` で日本語含む 100+ 言語対応)
 
 ---
 
@@ -81,12 +84,18 @@
 - [x] `bench.yml` で `workflow_dispatch` から各 ablation を起動可能に
       (`--ablations <csv>` flag + `BENCH_ABLATIONS` env、未指定時は 4 構成全実行)
 
-### Step 4: nightly スケジュールと regression alert
+### Step 4: snapshot regression check — **完了 (2026-04-30、PR #39)**
 
-- [ ] `benches/baseline.json` 初回 run の結果で生成
-- [ ] `compare_baseline.sh` (>5% 低下で警告)
-- [ ] `schedule` cron 有効化 (UTC 18:00)
-- [ ] 1 週間 nightly 観測、不安定であれば調整
+LLM 削除に伴い nightly cron + baseline.json 案は破棄、PR CI 内
+snapshot 比較に方針転換した。実装済の機能:
+
+- [x] `benches/scripts/compare_snapshot.sh` (per-case PASS→FAIL 検出)
+- [x] `bench.yml` の `pull_request` / `push` to main triggers
+- [x] `actions/cache@v4` で main 最新 snapshot を保存、PR で restore-keys 経由復元
+- [x] PR で cr × tier-0-1-2 (~5 min) を実行し、regression 検出時 fail
+- [x] baseline 不在時 (初回) は exit 0 で通す (graceful first-time)
+- 採用しなかった: nightly cron schedule (PR triggered で十分)、
+  `>5%` 閾値判定 (per-case PASS→FAIL の方が信号がクリア)
 
 ### Phase 4-β (後続検討、本フェーズのスコープ外)
 
@@ -254,4 +263,4 @@
 
 ---
 
-*最終更新: 2026-04-30 (LLM 削除 + SetFit デフォルト head 同梱で更新)*
+*最終更新: 2026-04-30 (LLM 削除 + SetFit デフォルト head 同梱 + docs cleanup)*

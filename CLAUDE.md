@@ -76,13 +76,16 @@ before the previous one's done-criteria are met.
   compiled selectively from the hierarchy — never a full-history
   dump.
 - **Tiered processing escalates only when needed.** Prefer
-  Tier 0 (deterministic / BM25) → Tier 1 (small classifiers /
-  encoders) → Tier 2 (lightweight encoder compression) → Tier 3
-  (full LLM calls). Do not call out to an LLM where a deterministic
-  or lightweight model suffices.
-- **Storage, embedding, and LLM provider are trait-abstracted.**
-  `tsumugi-core` does not depend on a concrete vector DB, embedding
-  API, or LLM client. In-memory implementations are the test default.
+  Tier 0 (deterministic / BM25) → Tier 1 (small encoders / classifiers)
+  → Tier 2 (encoder-only ONNX impls: LlmLingua-2, NLI zero-shot,
+  DistilBART). tsumugi removed all autoregressive LLM calls in
+  2026-04; do not reintroduce an `LLMProvider` trait or LLM-backed
+  impls. Downstream consumers that need an LLM call bridge to one
+  outside tsumugi-core, against the `CompiledContext` it produces.
+- **Storage and embedding are trait-abstracted.** `tsumugi-core` does
+  not depend on a concrete vector DB or embedding API. In-memory
+  / mock implementations are the test default; `OnnxEmbedding` is the
+  production embedding path under the `onnx` feature.
 - **Newtype IDs are not bypassed.** `ChunkId`, `FactId`,
   `PendingItemId` are wrapper types; do not pass raw strings or
   integers through them.
