@@ -1,0 +1,195 @@
+name: Train SetFit default head
+
+# Auto-trains the SetFit default head and commits the encoder ONNX via
+# Git LFS. This works around the Claude Code on the web environment's
+# git proxy limitation (which returns HTTP 502 to LFS batch endpoints)
+# by running the training + LFS push from real GitHub Actions instead
+# of from the dev container.
+#
+# Self-healing semantics:
+#   - If `models/setfit/all-MiniLM-L6-v2-default.onnx` is already
+#     tracked by Git LFS on the target branch, the job is a no-op.
+#   - Otherwise: install pinned deps, run `scripts/train_setfit.py`,
+#     commit the resulting ONNX (+ head.json + tokenizer.json) to a
+#     new branch, open a PR back to main.
+#
+# The pin set in `models/setfit-training/README.md` is reproduced here
+# for stability — setfit 1.1.0 breaks against newer transformers /
+# sentence-transformers / datasets / optimum / onnxruntime / torch.
+
+on:
+  workflow_dispatch:
+    inputs:
+      force_retrain:
+        description: 'Re-train even if ONNX already exists in LFS'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  train:
+    name: train + open PR
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # `lfs: true` actually pulls LFS-tracked content (not just
+          # pointers) so the existence check below sees real bytes when
+          # the ONNX has already been committed.
+          lfs: true
+          # Need full history so the new commit + branch can be pushed
+          # back without "shallow update not allowed" errors.
+          fetch-depth: 0
+
+      - name: Check whether ONNX is already in LFS
+        id: check
+        run: |
+          if [[ "${{ inputs.force_retrain }}" == "true" ]]; then
+            echo "force_retrain=true → will train"
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if git lfs ls-files models/setfit/all-MiniLM-L6-v2-default.onnx | grep -q .; then
+            echo "ONNX already tracked in Git LFS — skipping training"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ONNX not yet in LFS — will train"
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-python@v5
+        if: steps.check.outputs.skip == 'false'
+        with:
+          python-version: '3.11'
+
+      - name: Cache pip wheels
+        if: steps.check.outputs.skip == 'false'
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: train-setfit-pip-${{ hashFiles('scripts/train_setfit.py') }}
+
+      - name: Install pinned training deps
+        if: steps.check.outputs.skip == 'false'
+        # Pinned versions documented in models/setfit-training/README.md
+        # and the script header. Newer transformers / sentence-transformers
+        # break setfit 1.1.0's Trainer initialiser; newer onnxruntime
+        # references torch.int4 which torch 2.4.1 doesn't have.
+        run: |
+          pip install --upgrade pip
+          pip install \
+            "setfit==1.1.0" \
+            "transformers==4.45.2" \
+            "sentence-transformers==3.2.1" \
+            "datasets==2.21.0" \
+            "optimum[onnxruntime]==1.23.3" \
+            "onnxruntime==1.20.1" \
+            "torch==2.4.1"
+
+      - name: Run training
+        if: steps.check.outputs.skip == 'false'
+        run: python3 scripts/train_setfit.py
+
+      - name: Verify training output
+        if: steps.check.outputs.skip == 'false'
+        run: |
+          test -e models/setfit/all-MiniLM-L6-v2-default.onnx
+          test -e models/setfit/all-MiniLM-L6-v2-default.head.json
+          test -e models/setfit/all-MiniLM-L6-v2-default.tokenizer.json
+          ls -la models/setfit/
+
+      - name: Commit + push branch
+        if: steps.check.outputs.skip == 'false'
+        id: branch
+        run: |
+          BRANCH="bot/setfit-onnx-${{ github.run_id }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          # Re-add all three artifacts. .gitattributes routes *.onnx
+          # through LFS automatically; head.json / tokenizer.json stay
+          # as plain Git so the diff is reviewable. If only the ONNX
+          # changed (head.json / tokenizer.json bit-identical), git
+          # ignores the no-op stages.
+          git add models/setfit/all-MiniLM-L6-v2-default.onnx
+          git add models/setfit/all-MiniLM-L6-v2-default.head.json
+          git add models/setfit/all-MiniLM-L6-v2-default.tokenizer.json
+          if git diff --cached --quiet; then
+            echo "Nothing to commit — training reproduced existing artifacts bit-identically."
+            echo "skip_pr=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Compose the commit message via a heredoc so the multi-line
+          # body doesn't trip up YAML block-scalar parsing.
+          cat > /tmp/commit-msg <<MSG_EOF
+          feat(setfit): commit trained ONNX encoder via LFS
+
+          Auto-generated by .github/workflows/train_setfit.yml run ${{ github.run_id }}.
+          Reproduces models/setfit/all-MiniLM-L6-v2-default.{onnx,tokenizer.json,head.json}
+          from models/setfit-training/queries.jsonl with the pinned deps.
+
+          After this lands on main, SetFitClassifier::from_dir_and_stem(
+            "models/setfit", "all-MiniLM-L6-v2-default"
+          ) works without env vars.
+          MSG_EOF
+          git commit --file=/tmp/commit-msg
+          git push -u origin "$BRANCH"
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+          echo "skip_pr=false" >> "$GITHUB_OUTPUT"
+
+      - name: Open PR
+        if: steps.check.outputs.skip == 'false' && steps.branch.outputs.skip_pr == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Heredoc into a body file to avoid shell-quoting hell with
+          # backticks / double quotes / asterisks in the PR description.
+          cat > /tmp/pr-body.md <<'BODY_EOF'
+          ## Summary
+
+          Auto-generated by `.github/workflows/train_setfit.yml` run %RUN_ID%.
+
+          Re-runs `scripts/train_setfit.py` against `models/setfit-training/queries.jsonl`
+          with the pinned dependency set, then commits the resulting encoder ONNX
+          through Git LFS.
+
+          ## Why this exists
+
+          PR #40 shipped the SetFit script + dataset + head.json + tokenizer.json but
+          couldn't push the ~86 MB encoder ONNX because the Claude Code on the web
+          environment's local git proxy returns HTTP 502 to LFS batch endpoints. CI
+          runs against real GitHub LFS so the push works here.
+
+          ## Self-healing
+
+          The triggering workflow checks `git lfs ls-files` first and skips training
+          if the ONNX is already in LFS. Re-running the workflow after this PR merges
+          is a no-op.
+
+          ## CI implications
+
+          Pushes made with `secrets.GITHUB_TOKEN` do **not** trigger downstream
+          workflows. So `bench.yml` and `ci.yml` will NOT auto-run on this PR — the
+          reviewer should either trigger them manually via `workflow_dispatch` after
+          checking out the branch, or accept that the human review covers what
+          would have been auto-checked.
+
+          ## After merge
+
+          `SetFitClassifier::from_dir_and_stem("models/setfit", "all-MiniLM-L6-v2-default")`
+          works out-of-the-box without env vars.
+          BODY_EOF
+          # Splice the run id in (heredoc 'BODY_EOF' suppresses shell expansion,
+          # so we placeholder-substitute here).
+          sed -i "s/%RUN_ID%/${{ github.run_id }}/g" /tmp/pr-body.md
+
+          gh pr create \
+            --base main \
+            --head "${{ steps.branch.outputs.branch }}" \
+            --title "feat(setfit): commit trained ONNX encoder via LFS" \
+            --body-file /tmp/pr-body.md

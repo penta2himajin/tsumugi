@@ -19,7 +19,7 @@
 - [ ] oxidtr scaffolding の再評価 (helpers の transitive closure walker、fixtures 等を選択的に wire するか)
 - [ ] IkeEmbedding の `u64` bit packing 最適化 (retrieval hot path でメモリと SIMD を活用)
 - [ ] Tauri プラグイン crate の追加 (現状はダウンストリームで `#[tauri::command]` を手動定義する前提)
-- [ ] SetFit デフォルト head の ONNX (~86 MB、LFS) を main に commit (PR #40 で Claude Code 環境の git proxy 制約により未 commit)
+- [ ] SetFit デフォルト head の ONNX (~86 MB、LFS) を main に commit (PR #40 で Claude Code 環境の git proxy 制約により未 commit)。`gh workflow run train_setfit.yml` で CI 経由で訓練 + LFS push + PR 自動生成、merge すれば完了 (workflow は self-healing で再実行は no-op)
 - [ ] 多言語 SetFit head の生成 + 同梱 (`paraphrase-multilingual-MiniLM-L12-v2` で日本語含む 100+ 言語対応)
 
 ---
