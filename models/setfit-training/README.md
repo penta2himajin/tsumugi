@@ -8,6 +8,10 @@ that tsumugi ships with — `models/setfit/all-MiniLM-L6-v2-default.{onnx,tokeni
 - **`queries.jsonl`** — 4 labels × 16 examples = 64 lines. The seed
   dataset for SetFit fine-tuning. Each row: `{"text": "...", "label":
   "Literal|Narrative|Analytical|Unknown"}`.
+- **`holdout.jsonl`** — 6 examples reserved for the post-training
+  accuracy gate. Same schema as `queries.jsonl`. `scripts/train_setfit.py`
+  refuses to export artifacts if accuracy on this set falls below 4/6
+  (66.7%); the default head clears it at 5/6 (83%).
 - **`README.md`** (this file) — re-train procedure, label definitions,
   reproducibility notes.
 
@@ -90,13 +94,18 @@ same `queries.jsonl` + same dependency versions produce a bit-identical
 core only consumes the encoder embedding so the runtime behaviour is
 unaffected.
 
-## Held-out sanity check
+## Held-out accuracy gate (automated)
 
-After training the default head, the following 6 held-out queries
-classify as expected (5/6 = 83%, in line with SetFit paper's reported
-80-90% range for 16-examples-per-class fine-tuning):
+`scripts/train_setfit.py` evaluates the trained model against
+`holdout.jsonl` after fine-tuning and **refuses to export artifacts**
+if accuracy falls below `MIN_HOLDOUT_ACCURACY = 4/6 (66.7%)`. The
+default 4-label × 16-example dataset clears the gate at 5/6 = 83%
+(in line with SetFit paper's reported 80-90% range for 16-examples-
+per-class fine-tuning).
 
-| query | expected | predicted |
+Canonical holdout (`holdout.jsonl`):
+
+| query | expected | predicted (default head) |
 |---|---|---|
 | How tall is Mount Fuji? | Literal | Literal ✓ |
 | Compare GDP across countries | Analytical | Analytical ✓ |
@@ -107,8 +116,14 @@ classify as expected (5/6 = 83%, in line with SetFit paper's reported
 
 The last miss ("Why did the empire fall?") is a known borderline case
 between Literal (factual lookup of historical event) and Analytical
-(causal reasoning). Adding more "why" / "how come" examples to the
-Analytical bucket in `queries.jsonl` would tighten this boundary.
+(causal reasoning) — that's why the gate is set at 4/6 rather than
+6/6. Adding more "why" / "how come" examples to the Analytical bucket
+in `queries.jsonl` would tighten this boundary; if you do, raise the
+threshold accordingly.
+
+The gate runs unconditionally inside `train_setfit.yml`, so any
+regression on a re-train (encoder drift, label corruption, hyperparam
+break) fails CI before the bot can open the auto-commit PR.
 
 ## Multilingual
 

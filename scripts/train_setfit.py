@@ -15,10 +15,21 @@ Inputs:
 
   - `models/setfit-training/queries.jsonl` — 4 labels × 16 examples = 64 rows.
     Each row is `{"text": "...", "label": "Literal|Narrative|Analytical|Unknown"}`.
+  - `models/setfit-training/holdout.jsonl` — 6 reserved examples used as the
+    post-training accuracy gate. Same schema as `queries.jsonl`. The script
+    refuses to export artifacts if accuracy falls below
+    `MIN_HOLDOUT_ACCURACY` (4/6 = 66.7%); the default head clears it at
+    5/6 = 83%.
 
 Run:
 
   python3 scripts/train_setfit.py
+
+Exit codes:
+
+  0  — training + holdout gate passed, artifacts exported
+  2  — training data missing
+  3  — holdout accuracy below gate (no artifacts exported)
 
 The script is deterministic (fixed seed) so re-running with the same
 training data should produce a bit-identical head JSON. The encoder ONNX
@@ -62,6 +73,7 @@ from transformers import AutoTokenizer
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 TRAINING_FILE = REPO_ROOT / "models" / "setfit-training" / "queries.jsonl"
+HOLDOUT_FILE = REPO_ROOT / "models" / "setfit-training" / "holdout.jsonl"
 OUTPUT_DIR = REPO_ROOT / "models" / "setfit"
 OUTPUT_PREFIX = "all-MiniLM-L6-v2-default"
 
@@ -70,6 +82,13 @@ LABELS = ["Literal", "Narrative", "Analytical", "Unknown"]
 SEED = 0xC0FFEE
 EPOCHS = 1
 BATCH_SIZE = 16
+# Held-out accuracy floor. The default 4-label × 16-example dataset hits
+# 5/6 = 83% on the canonical holdout (one known borderline miss between
+# Literal and Analytical on "Why did the empire fall?"). Setting the gate
+# at 4/6 = 66.7% catches genuine regressions (encoder drift, label
+# corruption, hyperparameter break) without flapping on the borderline
+# example.
+MIN_HOLDOUT_ACCURACY = 4 / 6
 
 
 def set_seed(seed: int) -> None:
@@ -177,6 +196,53 @@ def export_head_json(model: SetFitModel, out_dir: Path, prefix: str) -> Path:
     return head_target
 
 
+def evaluate_holdout(model: SetFitModel, holdout_path: Path) -> float:
+    """Run the trained SetFit model against a held-out set and return accuracy.
+
+    The holdout file has the same JSONL schema as `queries.jsonl`. This is the
+    primary regression gate: `train_setfit.yml` runs this script on every
+    re-train, so a head whose accuracy drops below `MIN_HOLDOUT_ACCURACY`
+    fails CI before any artifacts are committed.
+    """
+    rows = []
+    with holdout_path.open() as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            rows.append(json.loads(line))
+    if not rows:
+        raise SystemExit(f"holdout file {holdout_path} is empty")
+
+    print(
+        f"Evaluating on {len(rows)} held-out queries from {holdout_path.name} ...",
+        flush=True,
+    )
+    texts = [r["text"] for r in rows]
+    # SetFit returns sklearn class IDs; we fed integers 0..3 indexed by
+    # LABELS order in load_dataset, so int(pred) → LABELS[int(pred)] is the
+    # right inverse mapping.
+    predictions = model.predict(texts)
+    correct = 0
+    for row, pred in zip(rows, predictions):
+        predicted = LABELS[int(pred)]
+        expected = row["label"]
+        mark = "ok " if predicted == expected else "MIS"
+        print(
+            f"  [{mark}] {row['text']!r:60s} → {predicted} (expected {expected})",
+            flush=True,
+        )
+        if predicted == expected:
+            correct += 1
+
+    accuracy = correct / len(rows)
+    print(
+        f"  holdout accuracy: {correct}/{len(rows)} = {accuracy * 100:.1f}%",
+        flush=True,
+    )
+    return accuracy
+
+
 def main() -> int:
     if not TRAINING_FILE.exists():
         print(f"error: {TRAINING_FILE} not found", file=sys.stderr)
@@ -202,6 +268,29 @@ def main() -> int:
     # SetFit Trainer leaves a `setfit-trainer-staging/` artefact behind. We
     # only want the head + encoder ONNX, so prune the dir at the end.
     staging = OUTPUT_DIR / "setfit-trainer-staging"
+
+    # Gate on holdout accuracy before exporting artifacts so a regressing
+    # head never lands in `models/setfit/`. If holdout.jsonl is missing
+    # (e.g. downstream consumer running their own training pipeline),
+    # warn and skip — the canonical repo always ships it.
+    if HOLDOUT_FILE.exists():
+        accuracy = evaluate_holdout(model, HOLDOUT_FILE)
+        if accuracy < MIN_HOLDOUT_ACCURACY:
+            print(
+                f"error: holdout accuracy {accuracy * 100:.1f}% is below the "
+                f"minimum {MIN_HOLDOUT_ACCURACY * 100:.1f}% gate. "
+                f"Refusing to export regressing artifacts.",
+                file=sys.stderr,
+            )
+            if staging.exists():
+                shutil.rmtree(staging)
+            return 3
+    else:
+        print(
+            f"warning: {HOLDOUT_FILE} not found — skipping accuracy gate. "
+            f"Add a holdout.jsonl to enable regression checking.",
+            flush=True,
+        )
 
     export_encoder_onnx(model, OUTPUT_DIR, OUTPUT_PREFIX)
     export_head_json(model, OUTPUT_DIR, OUTPUT_PREFIX)

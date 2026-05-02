@@ -93,6 +93,12 @@ jobs:
 
       - name: Run training
         if: steps.check.outputs.skip == 'false'
+        # Exit codes:
+        #   0 — training + holdout accuracy gate passed, artifacts exported
+        #   2 — training data missing
+        #   3 — holdout accuracy below `MIN_HOLDOUT_ACCURACY` (4/6 = 66.7%);
+        #       no artifacts exported, this job fails and the bot PR is
+        #       suppressed so a regressing head never reaches main.
         run: python3 scripts/train_setfit.py
 
       - name: Verify training output

@@ -20,6 +20,7 @@
 - [ ] IkeEmbedding の `u64` bit packing 最適化 (retrieval hot path でメモリと SIMD を活用)
 - [ ] Tauri プラグイン crate の追加 (現状はダウンストリームで `#[tauri::command]` を手動定義する前提)
 - [x] SetFit デフォルト head の ONNX (~86 MB、LFS) を main に commit (PR #42 で `train_setfit.yml` 追加 → PR #44 (`bot/setfit-onnx-25202499509`) で auto-commit 完了、PR #43 で input 変更時の auto-retrain も導入)
+- [x] SetFit 再訓練の accuracy regression gate (`scripts/train_setfit.py` が `models/setfit-training/holdout.jsonl` 上の accuracy を測定し、`MIN_HOLDOUT_ACCURACY = 4/6 (66.7%)` 未満なら artifact export を拒否。`train_setfit.yml` 経由の再訓練で品質劣化を CI 前段で検出)
 - [ ] 多言語 SetFit head の生成 + 同梱 (`paraphrase-multilingual-MiniLM-L12-v2` で日本語含む 100+ 言語対応)
 
 ---
@@ -263,4 +264,4 @@ snapshot 比較に方針転換した。実装済の機能:
 
 ---
 
-*最終更新: 2026-05-02 (SetFit ONNX を LFS で同梱完了、bench config 簡素化を反映)*
+*最終更新: 2026-05-02 (SetFit ONNX 同梱 + holdout accuracy gate を training script に追加)*
